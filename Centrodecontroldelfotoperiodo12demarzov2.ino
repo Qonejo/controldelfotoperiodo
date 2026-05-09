@@ -1,0 +1,306 @@
+#include <Adafruit_GFX.h>    
+#include <Adafruit_ST7789.h> 
+#include <XPT2046_Touchscreen.h>
+#include <SPI.h>
+#include <SD.h>
+#include <WiFi.h>
+#include <time.h>
+
+// ===== PINES ESP32-S3 SUPERMINI == direccion mac 94:A9:90:37:7A:EC ===
+#define TFT_CS 10
+#define TFT_RST 9
+#define TFT_DC 8
+#define TOUCH_CS 7
+#define SD_CS 5
+#define RELAY_PIN 4
+
+#define MI_NEGRO 0x0000
+#define MI_BLANCO 0xFFFF
+#define MI_MORADO 0xA01F
+#define MI_NARANJA 0xFD20
+
+Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+XPT2046_Touchscreen ts(TOUCH_CS);
+
+// ===== VARIABLES CULTIVO =====
+int lightHours = 12, darkHours = 12, daysVeg = 0, daysFlower = 0;
+bool isVegetative = true, inLightMode = true, showGraph = false;
+double photoSecondsElapsed = 0;
+float history[24]; 
+
+unsigned long lastMillis, lastUIRefresh, lastSave, lastHistoryUpdate;
+unsigned long lastWifiCheck = 0; // Para el refresco de WiFi
+unsigned long touchStartTime = 0;
+
+// Variables Salvapantallas
+bool screensaverActive = false;
+unsigned long lastTouchTime = 0;
+
+// Credenciales WiFi
+const char* ssid = "IZZI-367E";
+const char* password = "ehwa3pX7btcw";
+
+// ===== PERSISTENCIA SD =====
+void saveState() {
+    File file = SD.open("/estado.txt", FILE_WRITE);
+    if (file) {
+        file.printf("%d,%d,%d,%d,%d,%.2f", lightHours, darkHours, (isVegetative ? 1 : 0), daysVeg, daysFlower, photoSecondsElapsed);
+        file.close();
+        Serial.println(">> Estado guardado en SD.");
+    }
+}
+
+void loadState() {
+    if (!SD.exists("/estado.txt")) return;
+    File file = SD.open("/estado.txt");
+    if (file) {
+        String data = file.readString();
+        int v2;
+        if (sscanf(data.c_str(), "%d,%d,%d,%d,%d,%lf", &lightHours, &darkHours, &v2, &daysVeg, &daysFlower, &photoSecondsElapsed) >= 6) {
+            isVegetative = (v2 == 1);
+        }
+        file.close();
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    delay(1000); 
+
+    SPI.begin(12, 13, 11); 
+    tft.init(240, 320); 
+    tft.setRotation(1); 
+    tft.invertDisplay(false); 
+    tft.fillScreen(MI_NEGRO);
+    
+    ts.begin(); 
+    ts.setRotation(1);
+    
+    if (SD.begin(SD_CS)) {
+        loadState();
+    }
+    
+    pinMode(RELAY_PIN, OUTPUT);
+    
+    // Iniciar WiFi sin bloquear el código
+    WiFi.begin(ssid, password);
+    configTime(-21600, 0, "pool.ntp.org"); // UTC-6
+    
+    lastMillis = millis();
+    lastSave = millis();
+    lastTouchTime = millis();
+}
+
+void drawScreensaver() {
+    static int xPos = 60;
+    static int yPos = 100;
+    static unsigned long lastMove = 0;
+
+    if (millis() - lastMove > 30000 || screensaverActive == false) {
+        tft.fillScreen(MI_NEGRO);
+        struct tm ti;
+        if (getLocalTime(&ti)) {
+            char b[12];
+            strftime(b, 12, "%I:%M %p", &ti);
+            tft.setTextSize(2);
+            tft.setTextColor(0x4208); 
+            xPos = random(10, 160);
+            yPos = random(20, 200);
+            tft.setCursor(xPos, yPos);
+            tft.print(b);
+        }
+        lastMove = millis();
+        screensaverActive = true;
+    }
+}
+
+void loop() {
+    updatePhotoperiod(); 
+
+    // --- RECONEXIÓN WIFI SILENCIOSA (Cada 30 seg) ---
+    if (millis() - lastWifiCheck > 30000) {
+        if (WiFi.status() != WL_CONNECTED) {
+            WiFi.begin(ssid, password); 
+        }
+        lastWifiCheck = millis();
+    }
+
+    struct tm ti;
+    bool isNight = false;
+    if (getLocalTime(&ti)) {
+        if (ti.tm_hour >= 0 && ti.tm_hour < 8) isNight = true;
+    }
+
+    if (ts.touched()) {
+        lastTouchTime = millis();
+        if (screensaverActive) {
+            screensaverActive = false;
+            tft.fillScreen(MI_NEGRO);
+            drawUI();
+        }
+
+        TS_Point p = ts.getPoint();
+        int tx = map(p.y, 200, 3800, 320, 0); 
+        int ty = map(p.x, 200, 3800, 0, 240);
+        
+        if (touchStartTime == 0) {
+            touchStartTime = millis();
+            handleAction(tx, ty, 1); 
+        } else if (millis() - touchStartTime > 1000) {
+            handleAction(tx, ty, 3); 
+            delay(100); 
+        } else if (millis() - touchStartTime > 400) {
+            handleAction(tx, ty, 1); 
+            delay(120);
+        }
+    } else {
+        touchStartTime = 0;
+    }
+
+    if (millis() - lastUIRefresh > 1000) {
+        if (isNight && (millis() - lastTouchTime > 30000)) {
+            drawScreensaver();
+        } else {
+            screensaverActive = false; 
+            if (!showGraph) drawUI(); else drawGraph();
+        }
+        
+        lastUIRefresh = millis();
+        if (millis() - lastSave > 300000) { 
+            saveState(); 
+            lastSave = millis(); 
+        }
+    }
+}
+
+void updatePhotoperiod() {
+    unsigned long now = millis();
+    double delta = (now - lastMillis) / 1000.0;
+    lastMillis = now;
+    double totalSecs = (lightHours + darkHours) * 3600.0;
+    double lightSecs = lightHours * 3600.0;
+    photoSecondsElapsed += delta;
+
+    if (photoSecondsElapsed >= totalSecs) {
+        photoSecondsElapsed = 0;
+        if (isVegetative) daysVeg++; else daysFlower++;
+        saveState();
+    }
+
+    if (photoSecondsElapsed < lightSecs) {
+        digitalWrite(RELAY_PIN, LOW); 
+        inLightMode = true;
+    } else {
+        digitalWrite(RELAY_PIN, HIGH); 
+        inLightMode = false;
+    }
+
+    if (now - lastHistoryUpdate > 3600000) {
+        for (int i = 0; i < 23; i++) history[i] = history[i+1];
+        history[23] = (photoSecondsElapsed / totalSecs) * 100.0;
+        lastHistoryUpdate = now;
+    }
+}
+
+void printStyled(int x, int y, String label, String value, uint16_t valCol, int size, bool arrows = true) {
+    tft.setTextSize(size); tft.setCursor(x, y);
+    if (arrows) { tft.setTextColor(ST77XX_RED, MI_NEGRO); tft.print("< "); }
+    tft.setTextColor(MI_BLANCO, MI_NEGRO); tft.print(label);
+    tft.setTextColor(valCol, MI_NEGRO); tft.print(value);
+    if (arrows) { tft.setTextColor(ST77XX_RED, MI_NEGRO); tft.print(" >"); }
+}
+
+void drawUI() {
+    // Indicador de estado WiFi (Punto pequeño en la esquina)
+    uint16_t wifiCol = (WiFi.status() == WL_CONNECTED) ? ST77XX_CYAN : ST77XX_RED;
+    tft.fillCircle(5, 5, 3, wifiCol);
+
+    tft.setTextSize(3); tft.setTextColor(MI_BLANCO, MI_NEGRO);
+    struct tm ti; tft.setCursor(55, 15);
+    if (getLocalTime(&ti)) { 
+        char b[12]; 
+        strftime(b, 12, "%I:%M %p", &ti); 
+        tft.print(b); 
+    } else {
+        tft.print("--:-- --");
+    }
+
+    tft.fillCircle(305, 20, 4, ST77XX_YELLOW);
+    tft.setTextSize(1); tft.setTextColor(ST77XX_YELLOW, MI_NEGRO);
+    tft.setCursor(135, 45); tft.printf("Ciclo %dh    ", (lightHours + darkHours));
+    printStyled(10, 70, "LUZ: ", String(lightHours) + "h  ", ST77XX_YELLOW, 1);
+    printStyled(170, 70, "OSC: ", String(darkHours) + "h  ", MI_BLANCO, 1);
+    
+    uint16_t mCol = isVegetative ? ST77XX_GREEN : MI_MORADO;
+    printStyled(10, 100, "MODO: ", (isVegetative ? "VEGETACION" : "FLORACION  "), mCol, 2);
+    printStyled(10, 130, "DIAS VEG:  ", String(daysVeg) + "  ", ST77XX_GREEN, 2);
+    printStyled(10, 160, "DIAS FLOR: ", String(daysFlower) + "  ", MI_MORADO, 2);
+
+    int bx = 30, bw = 260, by = 190;
+    double phaseDur = inLightMode ? (lightHours*3600.0) : (darkHours*3600.0);
+    double phaseElap = inLightMode ? photoSecondsElapsed : (photoSecondsElapsed - (lightHours*3600.0));
+    float perc = (phaseElap / phaseDur) * 100.0;
+    tft.drawRect(bx, by, bw, 15, MI_BLANCO);
+    tft.fillRect(bx+2, by+2, (int)((bw-4)*(perc/100.0)), 11, mCol);
+    tft.fillRect(bx+2 + (int)((bw-4)*(perc/100.0)), by+2, (bw-4)-(int)((bw-4)*(perc/100.0)), 11, MI_NEGRO);
+
+    tft.setTextSize(1);
+    printStyled(10, 220, "FASE: ", (inLightMode ? "LUZ      " : "OSCURIDAD"), MI_BLANCO, 1, true);
+    tft.setCursor(170, 220); tft.setTextColor(MI_BLANCO, MI_NEGRO);
+    int h=(int)(phaseElap/3600), m=(int)((long)phaseElap%3600/60), s=(int)((long)phaseElap%60);
+    tft.printf("%02d:%02d:%02d ", h, m, s);
+    tft.setTextColor(MI_NARANJA, MI_NEGRO); 
+    tft.printf("%3d%%  ", (int)perc); 
+}
+
+void drawGraph() {
+    tft.fillScreen(MI_NEGRO);
+    tft.setTextColor(MI_BLANCO); tft.setTextSize(2);
+    tft.setCursor(60, 10); tft.print("HISTORIAL 24H (%)");
+    tft.drawLine(30, 40, 30, 200, MI_BLANCO);
+    tft.drawLine(30, 200, 300, 200, MI_BLANCO);
+    for (int i = 0; i < 23; i++) {
+        int x1 = 30 + (i * 11), y1 = 200 - (history[i] * 1.5);
+        int x2 = 30 + ((i + 1) * 11), y2 = 200 - (history[i+1] * 1.5);
+        tft.drawLine(x1, y1, x2, y2, ST77XX_GREEN);
+    }
+    tft.setTextSize(1); tft.setTextColor(ST77XX_RED);
+    tft.setCursor(100, 220); tft.print("< TOCAR PARA VOLVER >");
+}
+
+void handleAction(int tx, int ty, int step) {
+    if (showGraph) { showGraph = false; tft.fillScreen(MI_NEGRO); return; }
+    if (ty < 50 && tx > 270) { showGraph = true; tft.fillScreen(MI_NEGRO); return; }
+    if (ty >= 180 && ty <= 210) {
+        float ratio = constrain((float)(tx - 30) / 260.0, 0.0, 1.0);
+        double phDur = inLightMode ? (lightHours*3600.0) : (darkHours*3600.0);
+        photoSecondsElapsed = inLightMode ? (ratio*phDur) : (lightHours*3600.0 + (ratio*phDur));
+    }
+    else if (ty > 60 && ty < 90 && tx < 150) {
+        if (tx < 75) lightHours = (lightHours > step) ? lightHours - step : 1;
+        else lightHours = (lightHours < (100 - step)) ? lightHours + step : 99;
+    }
+    else if (ty > 60 && ty < 90 && tx >= 150) {
+        if (tx < 230) darkHours = (darkHours > step) ? darkHours - step : 1;
+        else darkHours = (darkHours < (100 - step)) ? darkHours + step : 99;
+    }
+    else if (ty > 90 && ty < 120) { isVegetative = !isVegetative; }
+    else if (ty > 120 && ty < 150) { 
+        if (tx < 150) daysVeg = (daysVeg >= step) ? daysVeg - step : 0;
+        else daysVeg += step; 
+    }
+    else if (ty > 150 && ty < 180) { 
+        if (tx < 150) daysFlower = (daysFlower >= step) ? daysFlower - step : 0;
+        else daysFlower += step;
+    }
+    else if (ty > 210 && tx < 160) { 
+        photoSecondsElapsed = inLightMode ? (lightHours * 3600.0 + 1) : 0; 
+    }
+    
+    double lightSecs = lightHours * 3600.0;
+    digitalWrite(RELAY_PIN, (photoSecondsElapsed < lightSecs) ? LOW : HIGH);
+    inLightMode = (photoSecondsElapsed < lightSecs);
+
+    saveState();
+    drawUI();
+}
