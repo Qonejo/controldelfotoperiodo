@@ -51,13 +51,14 @@ struct_message growData;
 // ================= MAC RECEPTOR ======================
 // =====================================================
 uint8_t broadcastAddress[] = {
-    0x94, 0xA9, 0x90,
-    0x37, 0x7A, 0xEC
+    0x00, 0x4B, 0x12,
+    0x3D, 0x19, 0xFC
 };
 
 unsigned long lastMillis, lastUIRefresh, lastSave, lastHistoryUpdate;
 unsigned long lastWifiCheck = 0; // Para el refresco de WiFi
 unsigned long touchStartTime = 0;
+unsigned long lastEspNowSend = 0;
 
 // Variables Salvapantallas
 bool screensaverActive = false;
@@ -129,7 +130,7 @@ void setup() {
         peerInfo.peer_addr,
         broadcastAddress,
         6);
-    peerInfo.channel = 0;
+    peerInfo.channel = WiFi.channel();
     peerInfo.encrypt = false;
     if (esp_now_add_peer(&peerInfo)
         != ESP_OK) {
@@ -257,10 +258,16 @@ void loop() {
             (photoSecondsElapsed /
             ((lightHours + darkHours) * 3600.0))
             * 100.0;
-        esp_now_send(
-            broadcastAddress,
-            (uint8_t *) &growData,
-            sizeof(growData));
+
+        if (millis() - lastEspNowSend > 3000) {
+            esp_now_send(
+                broadcastAddress,
+                (uint8_t *) &growData,
+                sizeof(growData)
+            );
+
+            lastEspNowSend = millis();
+        }
 
         if (millis() - lastSave > 300000) { 
             saveState(); 
