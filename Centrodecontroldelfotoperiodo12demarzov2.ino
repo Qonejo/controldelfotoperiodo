@@ -43,6 +43,7 @@ typedef struct struct_message {
     int hour;
     int minute;
     int second;
+    float vpd;
 } struct_message;
 
 struct_message growData;
@@ -59,6 +60,7 @@ unsigned long lastMillis, lastUIRefresh, lastSave, lastHistoryUpdate;
 unsigned long lastWifiCheck = 0; // Para el refresco de WiFi
 unsigned long touchStartTime = 0;
 unsigned long lastEspNowSend = 0;
+float remoteVPD = 0.0;
 
 // Variables Salvapantallas
 bool screensaverActive = false;
@@ -258,6 +260,7 @@ void loop() {
             (photoSecondsElapsed /
             ((lightHours + darkHours) * 3600.0))
             * 100.0;
+        growData.vpd = remoteVPD;
 
         if (millis() - lastEspNowSend > 3000) {
             esp_now_send(
@@ -328,7 +331,11 @@ void drawUI() {
         tft.print("--:-- --");
     }
 
-    tft.fillCircle(305, 20, 4, ST77XX_YELLOW);
+    tft.fillRect(270, 14, 50, 12, MI_NEGRO);
+    tft.setTextSize(1);
+    tft.setTextColor(ST77XX_YELLOW, MI_NEGRO);
+    tft.setCursor(270, 16);
+    tft.printf("VPD %.2f", remoteVPD);
     tft.setTextSize(1); tft.setTextColor(ST77XX_YELLOW, MI_NEGRO);
     tft.setCursor(135, 45); tft.printf("Ciclo %dh    ", (lightHours + darkHours));
     printStyled(10, 70, "LUZ: ", String(lightHours) + "h  ", ST77XX_YELLOW, 1);
