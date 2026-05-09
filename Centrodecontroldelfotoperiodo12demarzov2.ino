@@ -61,6 +61,7 @@ unsigned long lastMillis, lastUIRefresh, lastSave, lastHistoryUpdate;
 unsigned long lastWifiCheck = 0; // Para el refresco de WiFi
 unsigned long touchStartTime = 0;
 unsigned long lastEspNowSend = 0;
+unsigned long lastAutoSave = 0;
 float remoteVPD = 0.0;
 float lastDisplayedVPD = -999.0;
 unsigned long lastVpdDraw = 0;
@@ -87,25 +88,92 @@ void OnDataSent(
         Serial.println("ERROR");
 }
 
+void saveHistory() {
+    SD.remove("/history.txt");
+    File file = SD.open("/history.txt", FILE_WRITE);
+    if (!file) return;
+    for (int i = 0; i < 24; i++) {
+        if (i > 0) file.print(',');
+        file.printf("%.3f", history[i]);
+    }
+    file.close();
+    Serial.println("[SD] Historial guardado");
+}
+
+void loadHistory() {
+    for (int i = 0; i < 24; i++) history[i] = 0.0f;
+    if (!SD.exists("/history.txt")) {
+        saveHistory();
+        return;
+    }
+    File file = SD.open("/history.txt");
+    if (!file) return;
+    String data = file.readString();
+    file.close();
+
+    int from = 0;
+    for (int i = 0; i < 24; i++) {
+        int comma = data.indexOf(',', from);
+        String token = (comma >= 0) ? data.substring(from, comma) : data.substring(from);
+        history[i] = token.toFloat();
+        if (comma < 0) break;
+        from = comma + 1;
+    }
+    Serial.println("[SD] Historial cargado");
+}
+
 void saveState() {
+    SD.remove("/estado.txt");
     File file = SD.open("/estado.txt", FILE_WRITE);
     if (file) {
-        file.printf("%d,%d,%d,%d,%d,%.2f", lightHours, darkHours, (isVegetative ? 1 : 0), daysVeg, daysFlower, photoSecondsElapsed);
+        file.printf("%d,%d,%d,%d,%d,%.2f,%.2f,%d", lightHours, darkHours, (isVegetative ? 1 : 0), daysVeg, daysFlower, photoSecondsElapsed, remoteVPD, (inLightMode ? 1 : 0));
         file.close();
-        Serial.println(">> Estado guardado en SD.");
+        saveHistory();
+        Serial.println("[SD] Estado guardado");
     }
 }
 
 void loadState() {
-    if (!SD.exists("/estado.txt")) return;
+    if (!SD.exists("/estado.txt")) {
+        saveState();
+        return;
+    }
     File file = SD.open("/estado.txt");
     if (file) {
         String data = file.readString();
-        int v2;
-        if (sscanf(data.c_str(), "%d,%d,%d,%d,%d,%lf", &lightHours, &darkHours, &v2, &daysVeg, &daysFlower, &photoSecondsElapsed) >= 6) {
+        int v2, lightMode = 1;
+        float savedVPD = 0.0f;
+        int parsed = sscanf(data.c_str(), "%d,%d,%d,%d,%d,%lf,%f,%d", &lightHours, &darkHours, &v2, &daysVeg, &daysFlower, &photoSecondsElapsed, &savedVPD, &lightMode);
+        if (parsed >= 6) {
             isVegetative = (v2 == 1);
+            if (parsed >= 7) remoteVPD = savedVPD;
+            if (parsed >= 8) inLightMode = (lightMode == 1);
         }
         file.close();
+        Serial.println("[SD] Estado cargado");
+    }
+}
+
+void handleAutoSave() {
+    static int prevLightHours = lightHours;
+    static int prevDarkHours = darkHours;
+    static bool prevVegetative = isVegetative;
+    static bool prevLightMode = inLightMode;
+    static float prevHistoryLast = history[23];
+
+    bool configChanged = (lightHours != prevLightHours) || (darkHours != prevDarkHours) || (isVegetative != prevVegetative);
+    bool phaseChanged = (inLightMode != prevLightMode);
+    bool historyChanged = fabs(history[23] - prevHistoryLast) > 0.001f;
+    bool timeElapsed = millis() - lastAutoSave > 60000;
+
+    if (configChanged || phaseChanged || historyChanged || timeElapsed) {
+        saveState();
+        lastAutoSave = millis();
+        prevLightHours = lightHours;
+        prevDarkHours = darkHours;
+        prevVegetative = isVegetative;
+        prevLightMode = inLightMode;
+        prevHistoryLast = history[23];
     }
 }
 
@@ -156,6 +224,7 @@ void setup() {
     
     if (SD.begin(SD_CS)) {
         loadState();
+        loadHistory();
     }
     
     pinMode(RELAY_PIN, OUTPUT);
@@ -167,6 +236,7 @@ void setup() {
     lastMillis = millis();
     lastSave = millis();
     lastTouchTime = millis();
+    lastAutoSave = millis();
 }
 
 void drawScreensaver() {
@@ -294,10 +364,7 @@ void loop() {
             lastEspNowSend = millis();
         }
 
-        if (millis() - lastSave > 300000) { 
-            saveState(); 
-            lastSave = millis(); 
-        }
+        handleAutoSave();
     }
 }
 
