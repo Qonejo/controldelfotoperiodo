@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <time.h>
+#include <math.h>
 
 // ===== PINES ESP32-S3 SUPERMINI == direccion mac 94:A9:90:37:7A:EC ===
 #define TFT_CS 10
@@ -61,6 +62,8 @@ unsigned long lastWifiCheck = 0; // Para el refresco de WiFi
 unsigned long touchStartTime = 0;
 unsigned long lastEspNowSend = 0;
 float remoteVPD = 0.0;
+float lastDisplayedVPD = -999.0;
+unsigned long lastVpdDraw = 0;
 
 // Variables Salvapantallas
 bool screensaverActive = false;
@@ -189,6 +192,21 @@ void drawScreensaver() {
     }
 }
 
+void drawVPD() {
+    if (
+        fabs(remoteVPD - lastDisplayedVPD) > 0.01f ||
+        millis() - lastVpdDraw > 2000
+    ) {
+        tft.setTextSize(1);
+        tft.setTextColor(ST77XX_YELLOW, MI_NEGRO);
+        tft.setCursor(270, 16);
+        tft.printf("VPD %.2f", remoteVPD);
+
+        lastDisplayedVPD = remoteVPD;
+        lastVpdDraw = millis();
+    }
+}
+
 void loop() {
     updatePhotoperiod(); 
 
@@ -230,6 +248,10 @@ void loop() {
         }
     } else {
         touchStartTime = 0;
+    }
+
+    if (!showGraph && !screensaverActive) {
+        drawVPD();
     }
 
     if (millis() - lastUIRefresh > 1000) {
@@ -331,11 +353,6 @@ void drawUI() {
         tft.print("--:-- --");
     }
 
-    tft.fillRect(270, 14, 50, 12, MI_NEGRO);
-    tft.setTextSize(1);
-    tft.setTextColor(ST77XX_YELLOW, MI_NEGRO);
-    tft.setCursor(270, 16);
-    tft.printf("VPD %.2f", remoteVPD);
     tft.setTextSize(1); tft.setTextColor(ST77XX_YELLOW, MI_NEGRO);
     tft.setCursor(135, 45); tft.printf("Ciclo %dh    ", (lightHours + darkHours));
     printStyled(10, 70, "LUZ: ", String(lightHours) + "h  ", ST77XX_YELLOW, 1);
@@ -361,6 +378,7 @@ void drawUI() {
     tft.printf("%02d:%02d:%02d ", h, m, s);
     tft.setTextColor(MI_NARANJA, MI_NEGRO); 
     tft.printf("%3d%%  ", (int)perc); 
+    drawVPD();
 }
 
 void drawGraph() {
