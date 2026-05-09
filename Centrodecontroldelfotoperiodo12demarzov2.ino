@@ -4,6 +4,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <WiFi.h>
+#include <esp_now.h>
 #include <time.h>
 
 // ===== PINES ESP32-S3 SUPERMINI == direccion mac 94:A9:90:37:7A:EC ===
@@ -28,6 +29,32 @@ bool isVegetative = true, inLightMode = true, showGraph = false;
 double photoSecondsElapsed = 0;
 float history[24]; 
 
+// =====================================================
+// ================= ESP NOW ============================
+// =====================================================
+typedef struct struct_message {
+    int lightHours;
+    int darkHours;
+    int daysVeg;
+    int daysFlower;
+    bool isVegetative;
+    bool inLightMode;
+    float progressPercent;
+    int hour;
+    int minute;
+    int second;
+} struct_message;
+
+struct_message growData;
+
+// =====================================================
+// ================= MAC RECEPTOR ======================
+// =====================================================
+uint8_t broadcastAddress[] = {
+    0x94, 0xA9, 0x90,
+    0x37, 0x7A, 0xEC
+};
+
 unsigned long lastMillis, lastUIRefresh, lastSave, lastHistoryUpdate;
 unsigned long lastWifiCheck = 0; // Para el refresco de WiFi
 unsigned long touchStartTime = 0;
@@ -41,6 +68,19 @@ const char* ssid = "IZZI-367E";
 const char* password = "ehwa3pX7btcw";
 
 // ===== PERSISTENCIA SD =====
+// =====================================================
+// ================= ESP NOW CALLBACK ==================
+// =====================================================
+void OnDataSent(
+    const wifi_tx_info_t *info,
+    esp_now_send_status_t status) {
+    Serial.print("ESP NOW: ");
+    if (status == ESP_NOW_SEND_SUCCESS)
+        Serial.println("OK");
+    else
+        Serial.println("ERROR");
+}
+
 void saveState() {
     File file = SD.open("/estado.txt", FILE_WRITE);
     if (file) {
@@ -65,6 +105,38 @@ void loadState() {
 
 void setup() {
     Serial.begin(115200);
+    // =====================================================
+    // ================= WIFI STA ==========================
+    // =====================================================
+    WiFi.mode(WIFI_STA);
+    Serial.print("MAC EMISOR: ");
+    Serial.println(WiFi.macAddress());
+
+    // =====================================================
+    // ================= ESP NOW INIT ======================
+    // =====================================================
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("ESP NOW ERROR");
+        return;
+    }
+    esp_now_register_send_cb(OnDataSent);
+
+    // =====================================================
+    // ================= PEER ==============================
+    // =====================================================
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(
+        peerInfo.peer_addr,
+        broadcastAddress,
+        6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+    if (esp_now_add_peer(&peerInfo)
+        != ESP_OK) {
+        Serial.println("PEER ERROR");
+        return;
+    }
+
     delay(1000); 
 
     SPI.begin(12, 13, 11); 
@@ -166,6 +238,30 @@ void loop() {
         }
         
         lastUIRefresh = millis();
+        // =====================================================
+        // ================= ESP NOW SEND ======================
+        // =====================================================
+        struct tm ti2;
+        if (getLocalTime(&ti2)) {
+            growData.hour = ti2.tm_hour;
+            growData.minute = ti2.tm_min;
+            growData.second = ti2.tm_sec;
+        }
+        growData.lightHours = lightHours;
+        growData.darkHours = darkHours;
+        growData.daysVeg = daysVeg;
+        growData.daysFlower = daysFlower;
+        growData.isVegetative = isVegetative;
+        growData.inLightMode = inLightMode;
+        growData.progressPercent =
+            (photoSecondsElapsed /
+            ((lightHours + darkHours) * 3600.0))
+            * 100.0;
+        esp_now_send(
+            broadcastAddress,
+            (uint8_t *) &growData,
+            sizeof(growData));
+
         if (millis() - lastSave > 300000) { 
             saveState(); 
             lastSave = millis(); 
