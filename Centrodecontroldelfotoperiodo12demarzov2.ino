@@ -49,12 +49,25 @@ typedef struct struct_message {
 
 struct_message growData;
 
+typedef struct greenhouse_message {
+    float vpd;
+    float tds;
+    float ph;
+    float soil1;
+    float soil2;
+    float airTemp;
+    float airHum;
+    bool relayState;
+} greenhouse_message;
+
+greenhouse_message greenhouseData;
+
 // =====================================================
 // ================= MAC RECEPTOR ======================
 // =====================================================
-uint8_t broadcastAddress[] = {
-    0x00, 0x4B, 0x12,
-    0x3D, 0x19, 0xFC
+uint8_t macInvernadero[] = {
+    0x94, 0xA9, 0x90,
+    0x37, 0x7A, 0xEC
 };
 
 unsigned long lastMillis, lastUIRefresh, lastSave, lastHistoryUpdate;
@@ -63,8 +76,17 @@ unsigned long touchStartTime = 0;
 unsigned long lastEspNowSend = 0;
 unsigned long lastAutoSave = 0;
 float remoteVPD = 0.0;
+float remoteTDS = 0.0;
+float remotePH = 0.0;
+float remoteSoil1 = 0.0;
+float remoteSoil2 = 0.0;
+float remoteAirTemp = 0.0;
+float remoteAirHum = 0.0;
+bool remoteRelay = false;
 float lastDisplayedVPD = -999.0;
+float lastDisplayedTDS = -999.0;
 unsigned long lastVpdDraw = 0;
+unsigned long lastTdsDraw = 0;
 
 // Variables Salvapantallas
 bool screensaverActive = false;
@@ -86,6 +108,26 @@ void OnDataSent(
         Serial.println("OK");
     else
         Serial.println("ERROR");
+}
+
+void OnDataRecv(
+    const esp_now_recv_info_t *info,
+    const uint8_t *incomingData,
+    int len
+) {
+    if (len != sizeof(greenhouse_message)) return;
+    memcpy(&greenhouseData, incomingData, sizeof(greenhouseData));
+
+    remoteVPD = greenhouseData.vpd;
+    remoteTDS = greenhouseData.tds;
+    remotePH = greenhouseData.ph;
+    remoteSoil1 = greenhouseData.soil1;
+    remoteSoil2 = greenhouseData.soil2;
+    remoteAirTemp = greenhouseData.airTemp;
+    remoteAirHum = greenhouseData.airHum;
+    remoteRelay = greenhouseData.relayState;
+
+    Serial.println("[ESP-NOW] Datos recibidos");
 }
 
 void saveHistory() {
@@ -194,6 +236,7 @@ void setup() {
         return;
     }
     esp_now_register_send_cb(OnDataSent);
+    esp_now_register_recv_cb(OnDataRecv);
 
     // =====================================================
     // ================= PEER ==============================
@@ -201,7 +244,7 @@ void setup() {
     esp_now_peer_info_t peerInfo = {};
     memcpy(
         peerInfo.peer_addr,
-        broadcastAddress,
+        macInvernadero,
         6);
     peerInfo.channel = WiFi.channel();
     peerInfo.encrypt = false;
@@ -277,6 +320,21 @@ void drawVPD() {
     }
 }
 
+void drawTDS() {
+    if (
+        fabs(remoteTDS - lastDisplayedTDS) > 1.0f ||
+        millis() - lastTdsDraw > 2000
+    ) {
+        tft.setTextSize(1);
+        tft.setTextColor(ST77XX_CYAN, MI_NEGRO);
+        tft.setCursor(270, 28);
+        tft.printf("TDS %.0f", remoteTDS);
+
+        lastDisplayedTDS = remoteTDS;
+        lastTdsDraw = millis();
+    }
+}
+
 void loop() {
     updatePhotoperiod(); 
 
@@ -322,6 +380,7 @@ void loop() {
 
     if (!showGraph && !screensaverActive) {
         drawVPD();
+        drawTDS();
     }
 
     if (millis() - lastUIRefresh > 1000) {
@@ -356,7 +415,7 @@ void loop() {
 
         if (millis() - lastEspNowSend > 3000) {
             esp_now_send(
-                broadcastAddress,
+                macInvernadero,
                 (uint8_t *) &growData,
                 sizeof(growData)
             );
@@ -446,6 +505,7 @@ void drawUI() {
     tft.setTextColor(MI_NARANJA, MI_NEGRO); 
     tft.printf("%3d%%  ", (int)perc); 
     drawVPD();
+    drawTDS();
 }
 
 void drawGraph() {
