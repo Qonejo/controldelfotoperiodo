@@ -85,8 +85,11 @@ float remoteAirHum = 0.0;
 bool remoteRelay = false;
 float lastDisplayedVPD = -999.0;
 float lastDisplayedTDS = -999.0;
+float lastDisplayedSoil1 = -999.0;
+float lastDisplayedSoil2 = -999.0;
 unsigned long lastVpdDraw = 0;
 unsigned long lastTdsDraw = 0;
+unsigned long lastSoilDraw = 0;
 
 // Variables Salvapantallas
 bool screensaverActive = false;
@@ -335,6 +338,45 @@ void drawTDS() {
     }
 }
 
+void drawSoilBars() {
+    if (
+        fabs(remoteSoil1 - lastDisplayedSoil1) > 1.0f ||
+        fabs(remoteSoil2 - lastDisplayedSoil2) > 1.0f ||
+        millis() - lastSoilDraw > 2000
+    ) {
+        const int barW = 10;
+        const int barH = 45;
+        const int barY = 45;
+        const int bar1X = 275;
+        const int bar2X = 292;
+        const int labelY = barY + barH + 4;
+
+        float soil1 = constrain(remoteSoil1, 0.0f, 100.0f);
+        float soil2 = constrain(remoteSoil2, 0.0f, 100.0f);
+        int fill1 = (int)((soil1 / 100.0f) * (barH - 2));
+        int fill2 = (int)((soil2 / 100.0f) * (barH - 2));
+
+        tft.fillRect(bar1X, barY, barW, barH, MI_NEGRO);
+        tft.fillRect(bar2X, barY, barW, barH, MI_NEGRO);
+        tft.drawRect(bar1X, barY, barW, barH, 0x8410);
+        tft.drawRect(bar2X, barY, barW, barH, 0x8410);
+
+        if (fill1 > 0) tft.fillRect(bar1X + 1, barY + (barH - 1 - fill1), barW - 2, fill1, ST77XX_CYAN);
+        if (fill2 > 0) tft.fillRect(bar2X + 1, barY + (barH - 1 - fill2), barW - 2, fill2, ST77XX_BLUE);
+
+        tft.setTextSize(1);
+        tft.setTextColor(MI_BLANCO, MI_NEGRO);
+        tft.setCursor(bar1X - 1, labelY);
+        tft.print("S1");
+        tft.setCursor(bar2X - 1, labelY);
+        tft.print("S2");
+
+        lastDisplayedSoil1 = remoteSoil1;
+        lastDisplayedSoil2 = remoteSoil2;
+        lastSoilDraw = millis();
+    }
+}
+
 void loop() {
     updatePhotoperiod(); 
 
@@ -381,6 +423,7 @@ void loop() {
     if (!showGraph && !screensaverActive) {
         drawVPD();
         drawTDS();
+        drawSoilBars();
     }
 
     if (millis() - lastUIRefresh > 1000) {
@@ -506,6 +549,7 @@ void drawUI() {
     tft.printf("%3d%%  ", (int)perc); 
     drawVPD();
     drawTDS();
+    drawSoilBars();
 }
 
 void drawGraph() {
