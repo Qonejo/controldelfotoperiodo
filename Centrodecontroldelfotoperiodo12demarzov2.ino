@@ -55,6 +55,7 @@ typedef struct greenhouse_message {
     float ph;
     float soil1;
     float soil2;
+    float co2;
     float airTemp;
     float airHum;
     bool relayState;
@@ -69,6 +70,10 @@ uint8_t macInvernadero[] = {
     0x94, 0xA9, 0x90,
     0x37, 0x7A, 0xEC
 };
+uint8_t macCalendarioESP[] = {
+    0xE0, 0x72, 0xA1,
+    0xE7, 0x7C, 0x8C
+};
 
 unsigned long lastMillis, lastUIRefresh, lastSave, lastHistoryUpdate;
 unsigned long lastWifiCheck = 0; // Para el refresco de WiFi
@@ -80,6 +85,7 @@ float remoteTDS = 0.0;
 float remotePH = 0.0;
 float remoteSoil1 = 0.0;
 float remoteSoil2 = 0.0;
+float remoteCO2 = 0.0;
 float remoteAirTemp = 0.0;
 float remoteAirHum = 0.0;
 bool remoteRelay = false;
@@ -87,9 +93,11 @@ float lastDisplayedVPD = -999.0;
 float lastDisplayedTDS = -999.0;
 float lastDisplayedSoil1 = -999.0;
 float lastDisplayedSoil2 = -999.0;
+float lastDisplayedCO2 = -999.0;
 unsigned long lastVpdDraw = 0;
 unsigned long lastTdsDraw = 0;
 unsigned long lastSoilDraw = 0;
+unsigned long lastCO2Draw = 0;
 
 // Variables Salvapantallas
 bool screensaverActive = false;
@@ -126,6 +134,7 @@ void OnDataRecv(
     remotePH = greenhouseData.ph;
     remoteSoil1 = greenhouseData.soil1;
     remoteSoil2 = greenhouseData.soil2;
+    remoteCO2 = greenhouseData.co2;
     remoteAirTemp = greenhouseData.airTemp;
     remoteAirHum = greenhouseData.airHum;
     remoteRelay = greenhouseData.relayState;
@@ -256,6 +265,18 @@ void setup() {
         Serial.println("PEER ERROR");
         return;
     }
+    esp_now_peer_info_t peerInfo2 = {};
+    memcpy(
+        peerInfo2.peer_addr,
+        macCalendarioESP,
+        6);
+    peerInfo2.channel = WiFi.channel();
+    peerInfo2.encrypt = false;
+    if (esp_now_add_peer(&peerInfo2)
+        != ESP_OK) {
+        Serial.println("PEER2 ERROR");
+        return;
+    }
 
     delay(1000); 
 
@@ -335,6 +356,22 @@ void drawTDS() {
 
         lastDisplayedTDS = remoteTDS;
         lastTdsDraw = millis();
+    }
+}
+
+void drawCO2() {
+    if (
+        fabs(remoteCO2 - lastDisplayedCO2) > 1.0f ||
+        millis() - lastCO2Draw > 2000
+    ) {
+        tft.setTextSize(1);
+        uint16_t co2Color = (remoteCO2 > 1900.0f) ? ST77XX_RED : ST77XX_WHITE;
+        tft.setTextColor(co2Color, MI_NEGRO);
+        tft.setCursor(270, 40);
+        tft.printf("CO2 %.0f", remoteCO2);
+
+        lastDisplayedCO2 = remoteCO2;
+        lastCO2Draw = millis();
     }
 }
 
@@ -423,6 +460,7 @@ void loop() {
     if (!showGraph && !screensaverActive) {
         drawVPD();
         drawTDS();
+        drawCO2();
         drawSoilBars();
     }
 
@@ -462,6 +500,12 @@ void loop() {
                 (uint8_t *) &growData,
                 sizeof(growData)
             );
+            esp_now_send(
+                macCalendarioESP,
+                (uint8_t *) &growData,
+                sizeof(growData)
+            );
+            Serial.println("[ESP-NOW] CALENDARIO ENVIADO");
 
             lastEspNowSend = millis();
         }
@@ -549,6 +593,7 @@ void drawUI() {
     tft.printf("%3d%%  ", (int)perc); 
     drawVPD();
     drawTDS();
+    drawCO2();
     drawSoilBars();
 }
 
@@ -569,7 +614,6 @@ void drawGraph() {
 
 void handleAction(int tx, int ty, int step) {
     if (showGraph) { showGraph = false; tft.fillScreen(MI_NEGRO); return; }
-    if (ty < 50 && tx > 270) { showGraph = true; tft.fillScreen(MI_NEGRO); return; }
     if (ty >= 180 && ty <= 210) {
         float ratio = constrain((float)(tx - 30) / 260.0, 0.0, 1.0);
         double phDur = inLightMode ? (lightHours*3600.0) : (darkHours*3600.0);
