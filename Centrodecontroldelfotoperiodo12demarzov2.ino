@@ -75,20 +75,24 @@ uint8_t macCalendarioESP[] = {
     0xE0, 0x72, 0xA1,
     0xE7, 0x7C, 0x8C
 };
+uint8_t macSoilNode[] = {
+    0xAC, 0xA7, 0x04,
+    0xB8, 0x0C, 0xAC
+};
 
 unsigned long lastMillis, lastUIRefresh, lastSave, lastHistoryUpdate;
 unsigned long lastWifiCheck = 0; // Para el refresco de WiFi
 unsigned long touchStartTime = 0;
 unsigned long lastEspNowSend = 0;
 unsigned long lastAutoSave = 0;
-float remoteVPD = 0.0;
-float remoteTDS = 0.0;
-float remotePH = 0.0;
-float remoteSoil1 = 0.0;
-float remoteSoil2 = 0.0;
-float remoteCO2 = 0.0;
-float remoteAirTemp = 0.0;
-float remoteAirHum = 0.0;
+float remoteVPD = 0;
+float remoteTDS = 0;
+float remotePH = 0;
+float remoteSoil1 = 0;
+float remoteSoil2 = 0;
+float remoteCO2 = 0;
+float remoteTemp = 0;
+float remoteHum = 0;
 bool remoteRelay = false;
 float lastDisplayedVPD = -999.0;
 float lastDisplayedTDS = -999.0;
@@ -136,11 +140,21 @@ void OnDataRecv(
     remoteSoil1 = greenhouseData.soil1;
     remoteSoil2 = greenhouseData.soil2;
     remoteCO2 = greenhouseData.co2;
-    remoteAirTemp = greenhouseData.airTemp;
-    remoteAirHum = greenhouseData.airHum;
+    remoteTemp = greenhouseData.airTemp;
+    remoteHum = greenhouseData.airHum;
     remoteRelay = greenhouseData.relayState;
 
-    Serial.println("[ESP-NOW] Datos recibidos");
+    Serial.println("[ESP-NOW RX] GREENHOUSE");
+    Serial.print("VPD: ");
+    Serial.println(remoteVPD);
+    Serial.print("TDS: ");
+    Serial.println(remoteTDS);
+    Serial.print("CO2: ");
+    Serial.println(remoteCO2);
+    Serial.print("S1: ");
+    Serial.println(remoteSoil1);
+    Serial.print("S2: ");
+    Serial.println(remoteSoil2);
 }
 
 void saveHistory() {
@@ -270,15 +284,19 @@ void setup() {
         return;
     }
     esp_now_peer_info_t peerInfo2 = {};
-    memcpy(
-        peerInfo2.peer_addr,
-        macCalendarioESP,
-        6);
+    memcpy(peerInfo2.peer_addr, macSoilNode, 6);
     peerInfo2.channel = 1;
     peerInfo2.encrypt = false;
-    if (esp_now_add_peer(&peerInfo2)
-        != ESP_OK) {
+    if (esp_now_add_peer(&peerInfo2) != ESP_OK) {
         Serial.println("PEER2 ERROR");
+        return;
+    }
+    esp_now_peer_info_t peerInfo3 = {};
+    memcpy(peerInfo3.peer_addr, macCalendarioESP, 6);
+    peerInfo3.channel = 1;
+    peerInfo3.encrypt = false;
+    if (esp_now_add_peer(&peerInfo3) != ESP_OK) {
+        Serial.println("PEER3 ERROR");
         return;
     }
 
