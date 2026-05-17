@@ -5,6 +5,7 @@
 #include <SD.h>
 #include <WiFi.h>
 #include <esp_now.h>
+#include <esp_wifi.h>
 #include <time.h>
 #include <math.h>
 
@@ -237,6 +238,9 @@ void setup() {
     // ================= WIFI STA ==========================
     // =====================================================
     WiFi.mode(WIFI_STA);
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_promiscuous(false);
     Serial.print("MAC EMISOR: ");
     Serial.println(WiFi.macAddress());
 
@@ -258,7 +262,7 @@ void setup() {
         peerInfo.peer_addr,
         macInvernadero,
         6);
-    peerInfo.channel = WiFi.channel();
+    peerInfo.channel = 1;
     peerInfo.encrypt = false;
     if (esp_now_add_peer(&peerInfo)
         != ESP_OK) {
@@ -270,7 +274,7 @@ void setup() {
         peerInfo2.peer_addr,
         macCalendarioESP,
         6);
-    peerInfo2.channel = WiFi.channel();
+    peerInfo2.channel = 1;
     peerInfo2.encrypt = false;
     if (esp_now_add_peer(&peerInfo2)
         != ESP_OK) {
