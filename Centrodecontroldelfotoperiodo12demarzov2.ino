@@ -287,7 +287,6 @@ void setup() {
     // ================= WIFI STA ==========================
     // =====================================================
     WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
     Serial.print("MAC EMISOR: ");
     Serial.println(WiFi.macAddress());
 
@@ -483,15 +482,8 @@ void loop() {
     // --- RECONEXIÓN WIFI SILENCIOSA (Cada 30 seg) ---
     if (millis() - lastWifiCheck > 30000) {
         if (WiFi.status() != WL_CONNECTED) {
-            WiFi.disconnect();
-            WiFi.begin(ssid, password);
-            while (WiFi.status() != WL_CONNECTED) {
-                delay(500);
-            }
-
-            wifiChannel = WiFi.channel();
-            Serial.print("WIFI CHANNEL: ");
-            Serial.println(wifiChannel);
+            Serial.println("WiFi reconnecting...");
+            WiFi.reconnect();
         }
         lastWifiCheck = millis();
     }
