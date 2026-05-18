@@ -88,6 +88,7 @@ uint8_t macSoilNode[] = {
 
 unsigned long lastMillis, lastUIRefresh, lastSave, lastHistoryUpdate;
 unsigned long lastWifiCheck = 0; // Para el refresco de WiFi
+uint8_t wifiChannel = 1;
 unsigned long touchStartTime = 0;
 unsigned long lastEspNowSend = 0;
 unsigned long lastAutoSave = 0;
@@ -306,11 +307,21 @@ void setup() {
     // =====================================================
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-    esp_wifi_set_promiscuous(false);
     Serial.print("MAC EMISOR: ");
     Serial.println(WiFi.macAddress());
+
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+    }
+
+    wifiChannel = WiFi.channel();
+    Serial.print("WIFI CHANNEL: ");
+    Serial.println(wifiChannel);
+
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_channel(wifiChannel, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_promiscuous(false);
 
     // =====================================================
     // ================= ESP NOW INIT ======================
@@ -330,7 +341,7 @@ void setup() {
         peerInfo.peer_addr,
         macInvernadero,
         6);
-    peerInfo.channel = 1;
+    peerInfo.channel = wifiChannel;
     peerInfo.encrypt = false;
     if (esp_now_add_peer(&peerInfo)
         != ESP_OK) {
@@ -339,7 +350,7 @@ void setup() {
     }
     esp_now_peer_info_t peerInfo2 = {};
     memcpy(peerInfo2.peer_addr, macSoilNode, 6);
-    peerInfo2.channel = 1;
+    peerInfo2.channel = wifiChannel;
     peerInfo2.encrypt = false;
     if (esp_now_add_peer(&peerInfo2) != ESP_OK) {
         Serial.println("PEER2 ERROR");
@@ -347,7 +358,7 @@ void setup() {
     }
     esp_now_peer_info_t peerInfo3 = {};
     memcpy(peerInfo3.peer_addr, macCalendarioESP, 6);
-    peerInfo3.channel = 1;
+    peerInfo3.channel = wifiChannel;
     peerInfo3.encrypt = false;
     if (esp_now_add_peer(&peerInfo3) != ESP_OK) {
         Serial.println("PEER3 ERROR");
@@ -372,17 +383,6 @@ void setup() {
     
     pinMode(RELAY_PIN, OUTPUT);
     
-    // Iniciar WiFi sin bloquear el código
-    WiFi.begin(ssid, password);
-    delay(1000);
-
-    esp_wifi_set_promiscuous(true);
-
-    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-
-    esp_wifi_set_promiscuous(false);
-
-    Serial.println("CHANNEL FIXED TO 1");
     configTime(-21600, 0, "pool.ntp.org"); // UTC-6
     
     lastMillis = millis();
@@ -509,19 +509,37 @@ void loop() {
             WiFi.disconnect();
 
             WiFi.begin(ssid, password);
+            while (WiFi.status() != WL_CONNECTED) {
+                delay(500);
+            }
 
-            delay(1000);
+            wifiChannel = WiFi.channel();
+            Serial.print("WIFI CHANNEL: ");
+            Serial.println(wifiChannel);
 
             esp_wifi_set_promiscuous(true);
-
-            esp_wifi_set_channel(
-                1,
-                WIFI_SECOND_CHAN_NONE
-            );
-
+            esp_wifi_set_channel(wifiChannel, WIFI_SECOND_CHAN_NONE);
             esp_wifi_set_promiscuous(false);
 
-            Serial.println("WIFI RECONNECTED CH1");
+            esp_now_peer_info_t peerInfo = {};
+            memcpy(peerInfo.peer_addr, macInvernadero, 6);
+            peerInfo.channel = wifiChannel;
+            peerInfo.encrypt = false;
+            esp_now_mod_peer(&peerInfo);
+
+            esp_now_peer_info_t peerInfo2 = {};
+            memcpy(peerInfo2.peer_addr, macSoilNode, 6);
+            peerInfo2.channel = wifiChannel;
+            peerInfo2.encrypt = false;
+            esp_now_mod_peer(&peerInfo2);
+
+            esp_now_peer_info_t peerInfo3 = {};
+            memcpy(peerInfo3.peer_addr, macCalendarioESP, 6);
+            peerInfo3.channel = wifiChannel;
+            peerInfo3.encrypt = false;
+            esp_now_mod_peer(&peerInfo3);
+
+            Serial.println("WIFI + ESP-NOW CHANNEL RESYNC");
         }
         lastWifiCheck = millis();
     }
