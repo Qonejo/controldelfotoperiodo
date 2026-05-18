@@ -62,12 +62,6 @@ typedef struct greenhouse_message {
     bool relayState;
 } greenhouse_message;
 
-typedef struct soil_message {
-    float soil1;
-    float soil2;
-    float co2;
-} soil_message;
-
 greenhouse_message greenhouseData;
 
 // =====================================================
@@ -139,8 +133,10 @@ void OnDataRecv(
     const uint8_t *incomingData,
     int len
 ) {
-    Serial.print("RX LEN: ");
+    Serial.print("RX SIZE: ");
     Serial.println(len);
+    Serial.print("EXPECTED: ");
+    Serial.println(sizeof(greenhouse_message));
 
     Serial.print("FROM: ");
 
@@ -186,29 +182,14 @@ void OnDataRecv(
         return;
     }
 
-    if (len == sizeof(soil_message)) {
-        soil_message incomingSoil;
-        memcpy(&incomingSoil, incomingData, sizeof(incomingSoil));
-        remoteSoil1 = constrain(incomingSoil.soil1, 0.0f, 100.0f);
-        remoteSoil2 = constrain(incomingSoil.soil2, 0.0f, 100.0f);
-        remoteCO2 = max(incomingSoil.co2, 0.0f);
-        lastEspNowReceiveMs = millis();
-        Serial.println("[ESP-NOW RX soil_message OK]");
-        Serial.print("REMOTE S1: ");
-        Serial.println(remoteSoil1);
-        Serial.print("REMOTE S2: ");
-        Serial.println(remoteSoil2);
-        Serial.print("REMOTE CO2: ");
-        Serial.println(remoteCO2);
-        return;
-    }
-
     if (len == sizeof(struct_message)) {
         struct_message incomingMessage;
         memcpy(&incomingMessage, incomingData, sizeof(incomingMessage));
         Serial.println("[ESP-NOW RX struct_message OK]");
         return;
     }
+
+    Serial.println("[ESP-NOW RX] Unknown payload size");
 }
 
 void saveHistory() {
