@@ -62,6 +62,12 @@ typedef struct greenhouse_message {
     bool relayState;
 } greenhouse_message;
 
+typedef struct soil_message {
+    float soil1;
+    float soil2;
+    float co2;
+} soil_message;
+
 greenhouse_message greenhouseData;
 
 // =====================================================
@@ -94,6 +100,7 @@ float remoteCO2 = 0;
 float remoteTemp = 0;
 float remoteHum = 0;
 bool remoteRelay = false;
+unsigned long lastEspNowReceiveMs = 0;
 float lastDisplayedVPD = -999.0;
 float lastDisplayedTDS = -999.0;
 float lastDisplayedSoil1 = -999.0;
@@ -152,40 +159,55 @@ void OnDataRecv(
 
     Serial.println(macStr);
 
-    if (
-        memcmp(
-            info->src_addr,
-            macSoilNode,
-            6
-        ) != 0
-    ) {
+    if (len == sizeof(greenhouse_message)) {
+        memcpy(&greenhouseData, incomingData, sizeof(greenhouseData));
+        remoteVPD = greenhouseData.vpd;
+        remoteTDS = greenhouseData.tds;
+        remotePH = greenhouseData.ph;
+        remoteSoil1 = greenhouseData.soil1;
+        remoteSoil2 = greenhouseData.soil2;
+        remoteCO2 = greenhouseData.co2;
+        remoteTemp = greenhouseData.airTemp;
+        remoteHum = greenhouseData.airHum;
+        remoteRelay = greenhouseData.relayState;
+        lastEspNowReceiveMs = millis();
+        Serial.println("[ESP-NOW RX greenhouse_message OK]");
+        Serial.print("VPD: ");
+        Serial.println(remoteVPD);
+        Serial.print("TDS: ");
+        Serial.println(remoteTDS);
+        Serial.print("CO2: ");
+        Serial.println(remoteCO2);
+        Serial.print("TEMP: ");
+        Serial.println(remoteTemp);
+        Serial.print("HUM: ");
+        Serial.println(remoteHum);
         return;
     }
 
-    if (len != sizeof(greenhouse_message)) return;
-    memcpy(&greenhouseData, incomingData, sizeof(greenhouseData));
+    if (len == sizeof(soil_message)) {
+        soil_message incomingSoil;
+        memcpy(&incomingSoil, incomingData, sizeof(incomingSoil));
+        remoteSoil1 = constrain(incomingSoil.soil1, 0.0f, 100.0f);
+        remoteSoil2 = constrain(incomingSoil.soil2, 0.0f, 100.0f);
+        remoteCO2 = max(incomingSoil.co2, 0.0f);
+        lastEspNowReceiveMs = millis();
+        Serial.println("[ESP-NOW RX soil_message OK]");
+        Serial.print("REMOTE S1: ");
+        Serial.println(remoteSoil1);
+        Serial.print("REMOTE S2: ");
+        Serial.println(remoteSoil2);
+        Serial.print("REMOTE CO2: ");
+        Serial.println(remoteCO2);
+        return;
+    }
 
-    remoteVPD = greenhouseData.vpd;
-    remoteTDS = greenhouseData.tds;
-    remotePH = greenhouseData.ph;
-    remoteSoil1 = greenhouseData.soil1;
-    remoteSoil2 = greenhouseData.soil2;
-    remoteCO2 = greenhouseData.co2;
-    remoteTemp = greenhouseData.airTemp;
-    remoteHum = greenhouseData.airHum;
-    remoteRelay = greenhouseData.relayState;
-
-    Serial.println("[ESP-NOW RX] GREENHOUSE");
-    Serial.print("VPD: ");
-    Serial.println(remoteVPD);
-    Serial.print("TDS: ");
-    Serial.println(remoteTDS);
-    Serial.print("CO2: ");
-    Serial.println(remoteCO2);
-    Serial.print("S1: ");
-    Serial.println(remoteSoil1);
-    Serial.print("S2: ");
-    Serial.println(remoteSoil2);
+    if (len == sizeof(struct_message)) {
+        struct_message incomingMessage;
+        memcpy(&incomingMessage, incomingData, sizeof(incomingMessage));
+        Serial.println("[ESP-NOW RX struct_message OK]");
+        return;
+    }
 }
 
 void saveHistory() {
@@ -283,6 +305,7 @@ void setup() {
     // ================= WIFI STA ==========================
     // =====================================================
     WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
     esp_wifi_set_promiscuous(false);
