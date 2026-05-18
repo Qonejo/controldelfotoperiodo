@@ -131,6 +131,37 @@ void OnDataRecv(
     const uint8_t *incomingData,
     int len
 ) {
+    Serial.print("RX LEN: ");
+    Serial.println(len);
+
+    Serial.print("FROM: ");
+
+    char macStr[18];
+
+    snprintf(
+        macStr,
+        sizeof(macStr),
+        "%02X:%02X:%02X:%02X:%02X:%02X",
+        info->src_addr[0],
+        info->src_addr[1],
+        info->src_addr[2],
+        info->src_addr[3],
+        info->src_addr[4],
+        info->src_addr[5]
+    );
+
+    Serial.println(macStr);
+
+    if (
+        memcmp(
+            info->src_addr,
+            macSoilNode,
+            6
+        ) != 0
+    ) {
+        return;
+    }
+
     if (len != sizeof(greenhouse_message)) return;
     memcpy(&greenhouseData, incomingData, sizeof(greenhouseData));
 
@@ -320,6 +351,15 @@ void setup() {
     
     // Iniciar WiFi sin bloquear el código
     WiFi.begin(ssid, password);
+    delay(1000);
+
+    esp_wifi_set_promiscuous(true);
+
+    esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+
+    esp_wifi_set_promiscuous(false);
+
+    Serial.println("CHANNEL FIXED TO 1");
     configTime(-21600, 0, "pool.ntp.org"); // UTC-6
     
     lastMillis = millis();
@@ -442,7 +482,23 @@ void loop() {
     // --- RECONEXIÓN WIFI SILENCIOSA (Cada 30 seg) ---
     if (millis() - lastWifiCheck > 30000) {
         if (WiFi.status() != WL_CONNECTED) {
-            WiFi.begin(ssid, password); 
+
+            WiFi.disconnect();
+
+            WiFi.begin(ssid, password);
+
+            delay(1000);
+
+            esp_wifi_set_promiscuous(true);
+
+            esp_wifi_set_channel(
+                1,
+                WIFI_SECOND_CHAN_NONE
+            );
+
+            esp_wifi_set_promiscuous(false);
+
+            Serial.println("WIFI RECONNECTED CH1");
         }
         lastWifiCheck = millis();
     }
