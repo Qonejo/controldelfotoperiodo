@@ -468,6 +468,13 @@ void drawCO2() {
         tft.setTextSize(1);
         uint16_t co2Color = (remoteCO2 > 1900.0f) ? ST77XX_RED : ST77XX_WHITE;
         tft.setTextColor(co2Color, MI_NEGRO);
+        tft.fillRect(
+            268,
+            40,
+            52,
+            10,
+            MI_NEGRO
+        );
         tft.setCursor(270, 40);
         tft.printf("CO2 %.0f", remoteCO2);
 
@@ -494,7 +501,13 @@ void drawSoilBars() {
         int fill1 = (int)((soil1 / 100.0f) * (barH - 2));
         int fill2 = (int)((soil2 / 100.0f) * (barH - 2));
 
-        tft.fillRect(260, 40, 60, 120, MI_NEGRO);
+        tft.fillRect(
+            274,
+            55,
+            28,
+            55,
+            MI_NEGRO
+        );
 
         tft.drawRect(bar1X, barY, barW, barH, 0x8410);
         tft.drawRect(bar2X, barY, barW, barH, 0x8410);
@@ -509,14 +522,6 @@ void drawSoilBars() {
         tft.setCursor(bar2X - 1, labelY);
         tft.print("S2");
 
-        tft.setTextColor(ST77XX_CYAN, MI_NEGRO);
-        tft.setCursor(266, 106);
-        tft.printf("%3d%%", (int)soil1);
-        tft.setTextColor(ST77XX_BLUE, MI_NEGRO);
-        tft.setCursor(288, 106);
-        tft.printf("%3d%%", (int)soil2);
-
-        drawWeedagotchi();
 
         lastDisplayedSoil1 = remoteSoil1;
         lastDisplayedSoil2 = remoteSoil2;
