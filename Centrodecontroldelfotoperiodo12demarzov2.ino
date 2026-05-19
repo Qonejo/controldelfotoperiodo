@@ -652,7 +652,68 @@ void printStyled(int x, int y, String label, String value, uint16_t valCol, int 
     if (arrows) { tft.setTextColor(ST77XX_RED, MI_NEGRO); tft.print(" >"); }
 }
 
+void drawGameboyHeart(
+    int x,
+    int y,
+    int p
+) {
+
+    uint16_t dark = 0x0320;
+    uint16_t light = 0x07E0;
+
+    auto px = [&](int xx, int yy, uint16_t c) {
+
+        tft.fillRect(
+            x + xx * p,
+            y + yy * p,
+            p,
+            p,
+            c
+        );
+    };
+
+    int heart[6][8] = {
+
+        {0,1,1,0,0,1,1,0},
+        {1,1,1,1,1,1,1,1},
+        {1,1,1,1,1,1,1,1},
+        {0,1,1,1,1,1,1,0},
+        {0,0,1,1,1,1,0,0},
+        {0,0,0,1,1,0,0,0}
+
+    };
+
+    // borde
+    for(int yy=0; yy<6; yy++) {
+
+        for(int xx=0; xx<8; xx++) {
+
+            if(heart[yy][xx]) {
+
+                px(xx-1, yy, dark);
+                px(xx+1, yy, dark);
+                px(xx, yy-1, dark);
+                px(xx, yy+1, dark);
+            }
+        }
+    }
+
+    // relleno
+    for(int yy=0; yy<6; yy++) {
+
+        for(int xx=0; xx<8; xx++) {
+
+            if(heart[yy][xx]) {
+
+                px(xx, yy, light);
+            }
+        }
+    }
+}
+
 void drawUI() {
+    int pulse = (millis() / 300) % 2;
+
     // Indicador de estado WiFi (Punto pequeño en la esquina)
     uint16_t wifiCol = (WiFi.status() == WL_CONNECTED) ? ST77XX_CYAN : ST77XX_RED;
     tft.fillCircle(5, 5, 3, wifiCol);
@@ -696,6 +757,11 @@ void drawUI() {
     drawTDS();
     drawCO2();
     drawSoilBars();
+    drawGameboyHeart(
+        268,
+        112,
+        pulse ? 2 : 3
+    );
 }
 
 void drawGraph() {
