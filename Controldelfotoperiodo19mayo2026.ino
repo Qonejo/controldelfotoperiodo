@@ -104,6 +104,7 @@ float remoteTemp = 0;
 float remoteHum = 0;
 bool remoteRelay = false;
 unsigned long lastEspNowReceiveMs = 0;
+void drawWeedagotchi();
 float lastDisplayedVPD = -999.0;
 float lastDisplayedTDS = -999.0;
 float lastDisplayedSoil1 = -999.0;
@@ -493,8 +494,8 @@ void drawSoilBars() {
         int fill1 = (int)((soil1 / 100.0f) * (barH - 2));
         int fill2 = (int)((soil2 / 100.0f) * (barH - 2));
 
-        tft.fillRect(bar1X, barY, barW, barH, MI_NEGRO);
-        tft.fillRect(bar2X, barY, barW, barH, MI_NEGRO);
+        tft.fillRect(260, 40, 60, 120, MI_NEGRO);
+
         tft.drawRect(bar1X, barY, barW, barH, 0x8410);
         tft.drawRect(bar2X, barY, barW, barH, 0x8410);
 
@@ -507,6 +508,15 @@ void drawSoilBars() {
         tft.print("S1");
         tft.setCursor(bar2X - 1, labelY);
         tft.print("S2");
+
+        tft.setTextColor(ST77XX_CYAN, MI_NEGRO);
+        tft.setCursor(266, 106);
+        tft.printf("%3d%%", (int)soil1);
+        tft.setTextColor(ST77XX_BLUE, MI_NEGRO);
+        tft.setCursor(288, 106);
+        tft.printf("%3d%%", (int)soil2);
+
+        drawWeedagotchi();
 
         lastDisplayedSoil1 = remoteSoil1;
         lastDisplayedSoil2 = remoteSoil2;
@@ -836,7 +846,6 @@ void drawUI() {
     tft.setTextColor(MI_NARANJA, MI_NEGRO);
     tft.printf("%3d%%  ", (int)perc);
 
-    drawWeedagotchi();
 }
 
 void drawGraph() {
