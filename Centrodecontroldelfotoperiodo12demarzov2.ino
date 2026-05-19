@@ -719,7 +719,7 @@ void drawGameboyHeart(
 }
 
 void drawUI() {
-    int pulse = (millis() / 300) % 2;
+    int sway = (int)(sin(millis() * 0.003f) * 2.0f);
 
     // Indicador de estado WiFi (Punto pequeño en la esquina)
     uint16_t wifiCol = (WiFi.status() == WL_CONNECTED) ? ST77XX_CYAN : ST77XX_RED;
@@ -764,13 +764,59 @@ void drawUI() {
     drawTDS();
     drawCO2();
     drawSoilBars();
-    int size = pulse ? 2 : 3;
+
+    float mood =
+        (remoteSoil1 + remoteSoil2) * 0.5f;
+
+    tft.fillRect(
+        255,
+        105,
+        60,
+        60,
+        MI_NEGRO
+    );
 
     drawGameboyHeart(
-        268 - (size * 3),
-        112 - (size * 3),
-        size
+        268 + sway,
+        112,
+        2
     );
+
+    int faceX = 268 + sway;
+    int eyeY = 124;
+    uint16_t faceCol = 0x9FF3;
+
+    if (mood >= 60.0f) {
+        tft.fillRect(faceX + 9, eyeY, 4, 2, faceCol);
+        tft.fillRect(faceX + 17, eyeY, 4, 2, faceCol);
+        tft.fillRect(faceX + 11, eyeY + 8, 10, 2, faceCol);
+        tft.fillRect(faceX + 13, eyeY + 10, 6, 2, faceCol);
+    } else if (mood >= 40.0f) {
+        tft.fillRect(faceX + 8, eyeY + 1, 4, 2, faceCol);
+        tft.fillRect(faceX + 18, eyeY + 1, 4, 2, faceCol);
+        tft.fillRect(faceX + 7, eyeY - 2, 4, 2, faceCol);
+        tft.fillRect(faceX + 19, eyeY - 2, 4, 2, faceCol);
+        tft.fillRect(faceX + 12, eyeY + 9, 8, 2, faceCol);
+    } else if (mood >= 10.0f) {
+        tft.fillRect(faceX + 8, eyeY + 2, 3, 2, faceCol);
+        tft.fillRect(faceX + 19, eyeY + 2, 3, 2, faceCol);
+        tft.fillRect(faceX + 12, eyeY + 10, 8, 2, faceCol);
+        tft.fillRect(faceX + 10, eyeY + 12, 2, 2, faceCol);
+        tft.fillRect(faceX + 20, eyeY + 12, 2, 2, faceCol);
+    } else {
+        uint16_t deadCol = 0x0200;
+        tft.fillRect(faceX + 5, 116, 18, 18, deadCol);
+        tft.fillRect(faceX + 3, 128, 22, 8, deadCol);
+        tft.fillRect(faceX + 8, eyeY + 1, 2, 2, faceCol);
+        tft.fillRect(faceX + 10, eyeY + 3, 2, 2, faceCol);
+        tft.fillRect(faceX + 10, eyeY + 1, 2, 2, faceCol);
+        tft.fillRect(faceX + 8, eyeY + 3, 2, 2, faceCol);
+        tft.fillRect(faceX + 18, eyeY + 1, 2, 2, faceCol);
+        tft.fillRect(faceX + 20, eyeY + 3, 2, 2, faceCol);
+        tft.fillRect(faceX + 20, eyeY + 1, 2, 2, faceCol);
+        tft.fillRect(faceX + 18, eyeY + 3, 2, 2, faceCol);
+        tft.fillRect(faceX + 12, eyeY + 10, 8, 2, faceCol);
+    }
 }
 
 void drawGraph() {
