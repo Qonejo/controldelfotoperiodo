@@ -382,8 +382,6 @@ void setup() {
         return;
     }
 
-    delay(1000); 
-
     SPI.begin(12, 13, 11); 
     tft.init(240, 320); 
     tft.setRotation(1); 
@@ -573,7 +571,7 @@ void loop() {
 
     if (!showGraph && !screensaverActive) {
         static unsigned long lastRealtime = 0;
-        if (millis() - lastRealtime > 1000) {
+        if (millis() - lastRealtime > 250) {
             drawCO2();
             drawSoilBars();
             drawWeedagotchi();
@@ -760,31 +758,50 @@ void drawGameboyFrame(int x, int y, int p, int frame[19][21]) {
     uint16_t dark = 0x0320;
     uint16_t light = 0x07E0;
 
+    auto isFilled = [&](int xx, int yy) -> bool {
+        if (xx < 0 || xx >= 21 || yy < 0 || yy >= 19) return false;
+        return frame[yy][xx] == 1;
+    };
+
     auto px = [&](int xx, int yy, uint16_t c) {
         tft.fillRect(x + xx * p, y + yy * p, p, p, c);
     };
 
     for (int yy = 0; yy < 19; yy++) {
         for (int xx = 0; xx < 21; xx++) {
-            if (frame[yy][xx]) {
-                tft.fillRect(
-                    x + xx * p - 1,
-                    y + yy * p - 1,
-                    p + 2,
-                    p + 2,
-                    MI_BLANCO
-                );
-                px(xx - 1, yy, dark);
-                px(xx + 1, yy, dark);
-                px(xx, yy - 1, dark);
-                px(xx, yy + 1, dark);
+            if (!isFilled(xx, yy)) continue;
+
+            bool hasOuterGap = false;
+            for (int ny = yy - 1; ny <= yy + 1; ny++) {
+                for (int nx = xx - 1; nx <= xx + 1; nx++) {
+                    if (nx == xx && ny == yy) continue;
+                    if (!isFilled(nx, ny)) {
+                        hasOuterGap = true;
+                    }
+                }
             }
+
+            if (hasOuterGap) {
+                for (int ny = yy - 1; ny <= yy + 1; ny++) {
+                    for (int nx = xx - 1; nx <= xx + 1; nx++) {
+                        if (nx == xx && ny == yy) continue;
+                        if (!isFilled(nx, ny)) {
+                            px(nx, ny, MI_BLANCO);
+                        }
+                    }
+                }
+            }
+
+            if (!isFilled(xx - 1, yy)) px(xx - 1, yy, dark);
+            if (!isFilled(xx + 1, yy)) px(xx + 1, yy, dark);
+            if (!isFilled(xx, yy - 1)) px(xx, yy - 1, dark);
+            if (!isFilled(xx, yy + 1)) px(xx, yy + 1, dark);
         }
     }
 
     for (int yy = 0; yy < 19; yy++) {
         for (int xx = 0; xx < 21; xx++) {
-            if (frame[yy][xx]) {
+            if (isFilled(xx, yy)) {
                 px(xx, yy, light);
             }
         }
@@ -796,19 +813,29 @@ void drawWeedagotchi() {
     static int lastMoodBucket = -1;
     static int lastSoil1 = -1;
     static int lastSoil2 = -1;
+    static unsigned long lastAnimTick = 0;
 
-    int sway = (int)(sin(millis() * 0.0007f) * 1.0f);
     int soil1 = constrain((int)remoteSoil1, 0, 100);
     int soil2 = constrain((int)remoteSoil2, 0, 100);
     float mood = (soil1 + soil2) * 0.5f;
     int moodBucket = (mood >= 60.0f) ? 0 : (mood >= 40.0f) ? 1 : (mood >= 10.0f) ? 2 : 3;
 
     bool humidityChanged = (soil1 != lastSoil1) || (soil2 != lastSoil2);
-    bool swayChanged = (sway != lastSway);
-    if (!humidityChanged && !swayChanged && moodBucket == lastMoodBucket) return;
+    bool moodChanged = (moodBucket != lastMoodBucket);
+    bool animTick = (millis() - lastAnimTick >= 500);
+    int sway = lastSway;
+    bool swayChanged = false;
+
+    if (animTick || lastSway == 999) {
+        sway = (int)(sin(millis() * 0.0007f) * 1.0f);
+        swayChanged = (sway != lastSway);
+        lastAnimTick = millis();
+    }
+
+    if (!humidityChanged && !moodChanged && !swayChanged) return;
 
     if (lastSway != 999) {
-        tft.fillRect(238 + lastSway, 118, 63, 57, MI_NEGRO);
+        tft.fillRect(236 + lastSway, 116, 67, 61, MI_NEGRO);
     }
 
     if (moodBucket == 0) {
