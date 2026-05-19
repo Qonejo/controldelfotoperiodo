@@ -94,6 +94,7 @@ uint8_t wifiChannel = 1;
 unsigned long touchStartTime = 0;
 unsigned long lastEspNowSend = 0;
 unsigned long lastAutoSave = 0;
+unsigned long lastRealtimeUpdate = 0;
 float remoteVPD = 0;
 float remoteTDS = 0;
 float remotePH = 0;
@@ -461,56 +462,50 @@ void drawTDS() {
 }
 
 void drawCO2() {
-    if (
-        fabs(remoteCO2 - lastDisplayedCO2) > 0.2f ||
-        millis() - lastCO2Draw > 500
-    ) {
+    static int lastCO2Int = -1;
+
+    int currentCO2 = (int)remoteCO2;
+    if (currentCO2 != lastCO2Int) {
         tft.setTextSize(1);
-        uint16_t co2Color = (remoteCO2 > 1900.0f) ? ST77XX_RED : ST77XX_WHITE;
+        uint16_t co2Color = (currentCO2 > 1900) ? ST77XX_RED : ST77XX_WHITE;
         tft.setTextColor(co2Color, MI_NEGRO);
         tft.fillRect(
             268,
             40,
-            52,
+            48,
             10,
             MI_NEGRO
         );
         tft.setCursor(270, 40);
-        tft.printf("CO2 %.0f", remoteCO2);
+        tft.printf("CO2 %d", currentCO2);
 
-        lastDisplayedCO2 = remoteCO2;
-        lastCO2Draw = millis();
+        lastCO2Int = currentCO2;
     }
 }
 
 void drawSoilBars() {
-    if (
-        fabs(remoteSoil1 - lastDisplayedSoil1) > 0.2f ||
-        fabs(remoteSoil2 - lastDisplayedSoil2) > 0.2f ||
-        millis() - lastSoilDraw > 500
-    ) {
-        const int barW = 10;
-        const int barH = 45;
-        const int barY = 55;
-        const int bar1X = 275;
-        const int bar2X = 292;
-        const int labelY = barY + barH + 4;
+    static int lastSoil1Int = -1;
+    static int lastSoil2Int = -1;
 
-        float soil1 = constrain(remoteSoil1, 0.0f, 100.0f);
-        float soil2 = constrain(remoteSoil2, 0.0f, 100.0f);
-        int fill1 = (int)((soil1 / 100.0f) * (barH - 2));
-        int fill2 = (int)((soil2 / 100.0f) * (barH - 2));
+    const int barW = 10;
+    const int barH = 45;
+    const int barY = 55;
+    const int bar1X = 275;
+    const int bar2X = 292;
+    const int labelY = barY + barH + 4;
 
-        tft.fillRect(
-            274,
-            55,
-            28,
-            55,
-            MI_NEGRO
-        );
+    int soil1Int = (int)constrain(remoteSoil1, 0.0f, 100.0f);
+    int soil2Int = (int)constrain(remoteSoil2, 0.0f, 100.0f);
+
+    if (soil1Int != lastSoil1Int || soil2Int != lastSoil2Int) {
+        int fill1 = (int)((soil1Int / 100.0f) * (barH - 2));
+        int fill2 = (int)((soil2Int / 100.0f) * (barH - 2));
 
         tft.drawRect(bar1X, barY, barW, barH, 0x8410);
         tft.drawRect(bar2X, barY, barW, barH, 0x8410);
+
+        tft.fillRect(bar1X + 1, barY + 1, barW - 2, barH - 2, MI_NEGRO);
+        tft.fillRect(bar2X + 1, barY + 1, barW - 2, barH - 2, MI_NEGRO);
 
         if (fill1 > 0) tft.fillRect(bar1X + 1, barY + (barH - 1 - fill1), barW - 2, fill1, ST77XX_CYAN);
         if (fill2 > 0) tft.fillRect(bar2X + 1, barY + (barH - 1 - fill2), barW - 2, fill2, ST77XX_BLUE);
@@ -522,10 +517,8 @@ void drawSoilBars() {
         tft.setCursor(bar2X - 1, labelY);
         tft.print("S2");
 
-
-        lastDisplayedSoil1 = remoteSoil1;
-        lastDisplayedSoil2 = remoteSoil2;
-        lastSoilDraw = millis();
+        lastSoil1Int = soil1Int;
+        lastSoil2Int = soil2Int;
     }
 }
 
@@ -574,11 +567,12 @@ void loop() {
     }
 
     if (!showGraph && !screensaverActive) {
-        drawVPD();
-        drawTDS();
-        drawCO2();
-        drawSoilBars();
         drawWeedagotchi();
+        if (millis() - lastRealtimeUpdate > 1000) {
+            drawCO2();
+            drawSoilBars();
+            lastRealtimeUpdate = millis();
+        }
     }
 
     if (millis() - lastUIRefresh > 1000) {
@@ -586,7 +580,7 @@ void loop() {
             drawScreensaver();
         } else {
             screensaverActive = false; 
-            if (!showGraph) drawUI(); else drawGraph();
+            if (showGraph) drawGraph();
         }
         
         lastUIRefresh = millis();
@@ -794,7 +788,9 @@ void drawWeedagotchi() {
 
     if (sway == lastSway && moodBucket == lastMoodBucket) return;
 
-    tft.fillRect(236, 116, 64, 60, MI_NEGRO);
+    if (lastSway != 999) {
+        tft.fillRect(238 + lastSway, 118, 63, 57, MI_NEGRO);
+    }
 
     if (moodBucket == 0) {
         drawGameboyFrame(238 + sway, 118, 3, happyFace);
