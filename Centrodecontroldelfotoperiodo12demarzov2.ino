@@ -483,7 +483,7 @@ void drawSoilBars() {
     ) {
         const int barW = 10;
         const int barH = 45;
-        const int barY = 45;
+        const int barY = 55;
         const int bar1X = 275;
         const int bar2X = 292;
         const int labelY = barY + barH + 4;
@@ -672,14 +672,17 @@ void drawGameboyHeart(
         );
     };
 
-    int heart[10][13] = {
+    int heart[13][13] = {
 
         {0,0,0,0,0,0,1,0,0,0,0,0,0},
+        {0,0,0,0,0,0,1,0,0,0,0,0,0},
+        {0,0,0,0,0,1,1,1,0,0,0,0,0},
         {1,0,0,0,0,1,1,1,0,0,0,0,1},
         {0,1,1,0,0,1,1,1,0,0,1,1,0},
         {0,0,1,1,0,1,1,1,0,1,1,0,0},
         {1,0,1,1,1,1,1,1,1,1,1,0,1},
         {0,1,1,1,1,1,1,1,1,1,1,1,0},
+        {0,0,1,1,1,1,1,1,1,1,1,0,0},
         {0,0,0,1,1,1,1,1,1,1,0,0,0},
         {1,1,1,1,1,1,1,1,1,1,1,1,1},
         {0,0,0,0,0,0,1,0,0,0,0,0,0},
@@ -688,7 +691,7 @@ void drawGameboyHeart(
     };
 
     // borde
-    for(int yy=0; yy<10; yy++) {
+    for(int yy=0; yy<13; yy++) {
 
         for(int xx=0; xx<13; xx++) {
 
@@ -703,7 +706,7 @@ void drawGameboyHeart(
     }
 
     // relleno
-    for(int yy=0; yy<10; yy++) {
+    for(int yy=0; yy<13; yy++) {
 
         for(int xx=0; xx<13; xx++) {
 
@@ -761,10 +764,12 @@ void drawUI() {
     drawTDS();
     drawCO2();
     drawSoilBars();
+    int size = pulse ? 2 : 3;
+
     drawGameboyHeart(
-        268,
-        112,
-        pulse ? 2 : 3
+        268 - (size * 3),
+        112 - (size * 3),
+        size
     );
 }
 
