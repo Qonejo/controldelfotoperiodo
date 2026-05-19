@@ -783,39 +783,38 @@ void drawUI() {
     );
 
     int faceX = 255 + sway;
-    int eyeY = 145;
+    int eyeY = 148;
     uint16_t faceCol = 0x9FF3;
 
     if (mood >= 60.0f) {
-        tft.fillRect(faceX + 9, eyeY, 4, 2, faceCol);
-        tft.fillRect(faceX + 17, eyeY, 4, 2, faceCol);
-        tft.fillRect(faceX + 11, eyeY + 8, 10, 2, faceCol);
-        tft.fillRect(faceX + 13, eyeY + 10, 6, 2, faceCol);
+        tft.fillRect(faceX + 14, eyeY, 6, 4, faceCol);
+        tft.fillRect(faceX + 32, eyeY, 6, 4, faceCol);
+
+        tft.fillRect(faceX + 18, eyeY + 10, 16, 3, faceCol);
     } else if (mood >= 40.0f) {
-        tft.fillRect(faceX + 8, eyeY + 1, 4, 2, faceCol);
-        tft.fillRect(faceX + 18, eyeY + 1, 4, 2, faceCol);
-        tft.fillRect(faceX + 7, eyeY - 2, 4, 2, faceCol);
-        tft.fillRect(faceX + 19, eyeY - 2, 4, 2, faceCol);
-        tft.fillRect(faceX + 12, eyeY + 9, 8, 2, faceCol);
+        tft.drawLine(faceX + 12, eyeY + 2, faceX + 18, eyeY, faceCol);
+        tft.drawLine(faceX + 34, eyeY, faceX + 40, eyeY + 2, faceCol);
+
+        tft.fillRect(faceX + 14, eyeY + 4, 5, 3, faceCol);
+        tft.fillRect(faceX + 33, eyeY + 4, 5, 3, faceCol);
+
+        tft.fillRect(faceX + 20, eyeY + 12, 12, 2, faceCol);
     } else if (mood >= 10.0f) {
-        tft.fillRect(faceX + 8, eyeY + 2, 3, 2, faceCol);
-        tft.fillRect(faceX + 19, eyeY + 2, 3, 2, faceCol);
-        tft.fillRect(faceX + 12, eyeY + 10, 8, 2, faceCol);
-        tft.fillRect(faceX + 10, eyeY + 12, 2, 2, faceCol);
-        tft.fillRect(faceX + 20, eyeY + 12, 2, 2, faceCol);
+        tft.fillRect(faceX + 14, eyeY, 5, 4, faceCol);
+        tft.fillRect(faceX + 33, eyeY, 5, 4, faceCol);
+
+        tft.drawLine(faceX + 18, eyeY + 14, faceX + 30, eyeY + 10, faceCol);
     } else {
         uint16_t deadCol = 0x0200;
         tft.fillRect(faceX + 5, 116, 18, 18, deadCol);
         tft.fillRect(faceX + 3, 128, 22, 8, deadCol);
-        tft.fillRect(faceX + 8, eyeY + 1, 2, 2, faceCol);
-        tft.fillRect(faceX + 10, eyeY + 3, 2, 2, faceCol);
-        tft.fillRect(faceX + 10, eyeY + 1, 2, 2, faceCol);
-        tft.fillRect(faceX + 8, eyeY + 3, 2, 2, faceCol);
-        tft.fillRect(faceX + 18, eyeY + 1, 2, 2, faceCol);
-        tft.fillRect(faceX + 20, eyeY + 3, 2, 2, faceCol);
-        tft.fillRect(faceX + 20, eyeY + 1, 2, 2, faceCol);
-        tft.fillRect(faceX + 18, eyeY + 3, 2, 2, faceCol);
-        tft.fillRect(faceX + 12, eyeY + 10, 8, 2, faceCol);
+        tft.drawLine(faceX + 14, eyeY, faceX + 20, eyeY + 6, faceCol);
+        tft.drawLine(faceX + 20, eyeY, faceX + 14, eyeY + 6, faceCol);
+
+        tft.drawLine(faceX + 33, eyeY, faceX + 39, eyeY + 6, faceCol);
+        tft.drawLine(faceX + 39, eyeY, faceX + 33, eyeY + 6, faceCol);
+
+        tft.fillRect(faceX + 20, eyeY + 13, 12, 2, faceCol);
     }
 }
 
