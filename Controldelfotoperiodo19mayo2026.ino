@@ -92,6 +92,7 @@ unsigned long lastMillis, lastUIRefresh, lastSave, lastHistoryUpdate;
 unsigned long lastWifiCheck = 0; // Para el refresco de WiFi
 uint8_t wifiChannel = 1;
 unsigned long touchStartTime = 0;
+unsigned long lastTouchRepeatMs = 0;
 unsigned long lastEspNowSend = 0;
 unsigned long lastAutoSave = 0;
 
@@ -120,6 +121,7 @@ unsigned long lastCO2Draw = 0;
 // Variables Salvapantallas
 bool screensaverActive = false;
 unsigned long lastTouchTime = 0;
+bool uiNeedsRedraw = true;
 
 // Credenciales WiFi
 const char* ssid = "IZZI-367E";
@@ -551,6 +553,7 @@ void loop() {
             screensaverActive = false;
             tft.fillScreen(MI_NEGRO);
             drawUI();
+            uiNeedsRedraw = false;
         }
 
         TS_Point p = ts.getPoint();
@@ -559,16 +562,18 @@ void loop() {
         
         if (touchStartTime == 0) {
             touchStartTime = millis();
+            lastTouchRepeatMs = millis();
             handleAction(tx, ty, 1); 
-        } else if (millis() - touchStartTime > 1000) {
+        } else if (millis() - touchStartTime > 1000 && millis() - lastTouchRepeatMs > 100) {
             handleAction(tx, ty, 3); 
-            delay(100); 
-        } else if (millis() - touchStartTime > 400) {
+            lastTouchRepeatMs = millis();
+        } else if (millis() - touchStartTime > 400 && millis() - lastTouchRepeatMs > 120) {
             handleAction(tx, ty, 1); 
-            delay(120);
+            lastTouchRepeatMs = millis();
         }
     } else {
         touchStartTime = 0;
+        lastTouchRepeatMs = 0;
     }
 
     if (!showGraph && !screensaverActive) {
@@ -580,13 +585,9 @@ void loop() {
             lastRealtime = millis();
         }
 
-        static unsigned long lastUIRedraw = 0;
-
-        if (millis() - lastUIRedraw > 1000) {
-
+        if (uiNeedsRedraw) {
             drawUI();
-
-            lastUIRedraw = millis();
+            uiNeedsRedraw = false;
         }
     }
 
@@ -594,7 +595,11 @@ void loop() {
         if (isNight && (millis() - lastTouchTime > 30000)) {
             drawScreensaver();
         } else {
-            screensaverActive = false; 
+            if (screensaverActive) {
+                screensaverActive = false;
+                tft.fillScreen(MI_NEGRO);
+                uiNeedsRedraw = true;
+            }
             if (showGraph) drawGraph();
         }
         
@@ -906,7 +911,7 @@ void drawGraph() {
 }
 
 void handleAction(int tx, int ty, int step) {
-    if (showGraph) { showGraph = false; tft.fillScreen(MI_NEGRO); return; }
+    if (showGraph) { showGraph = false; tft.fillScreen(MI_NEGRO); uiNeedsRedraw = true; return; }
     if (ty >= 180 && ty <= 210) {
         float ratio = constrain((float)(tx - 30) / 260.0, 0.0, 1.0);
         double phDur = inLightMode ? (lightHours*3600.0) : (darkHours*3600.0);
@@ -939,4 +944,5 @@ void handleAction(int tx, int ty, int step) {
 
     saveState();
     drawUI();
+    uiNeedsRedraw = false;
 }
