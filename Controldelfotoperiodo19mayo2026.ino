@@ -777,14 +777,15 @@ void drawGameboyFrame(
     int frame[19][21]
 ) {
 
-    uint16_t dark = 0x0320;
-    uint16_t light = 0x07E0;
+    uint16_t dark = 0x0200;
+    uint16_t light = 0x9FF3;
 
     for (int yy = 0; yy < 19; yy++) {
 
         for (int xx = 0; xx < 21; xx++) {
 
-            if(frame[yy][xx] != 1) continue;
+            if(frame[yy][xx] != 1)
+                continue;
 
             tft.fillRect(
                 x + xx * p,
@@ -797,8 +798,8 @@ void drawGameboyFrame(
             tft.fillRect(
                 x + xx * p + 1,
                 y + yy * p + 1,
-                p - 2,
-                p - 2,
+                p - 1,
+                p - 1,
                 light
             );
         }
