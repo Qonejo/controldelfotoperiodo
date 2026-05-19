@@ -94,7 +94,7 @@ uint8_t wifiChannel = 1;
 unsigned long touchStartTime = 0;
 unsigned long lastEspNowSend = 0;
 unsigned long lastAutoSave = 0;
-unsigned long lastRealtimeUpdate = 0;
+
 float remoteVPD = 0;
 float remoteTDS = 0;
 float remotePH = 0;
@@ -462,64 +462,69 @@ void drawTDS() {
 }
 
 void drawCO2() {
-    static int lastCO2Int = -1;
+    static int lastCO2 = -1;
 
-    int currentCO2 = (int)remoteCO2;
-    if (currentCO2 != lastCO2Int) {
-        tft.setTextSize(1);
-        uint16_t co2Color = (currentCO2 > 1900) ? ST77XX_RED : ST77XX_WHITE;
-        tft.setTextColor(co2Color, MI_NEGRO);
-        tft.fillRect(
-            268,
-            40,
-            48,
-            10,
-            MI_NEGRO
-        );
-        tft.setCursor(270, 40);
-        tft.printf("CO2 %d", currentCO2);
+    int co2 = (int)remoteCO2;
+    if (co2 == lastCO2) return;
 
-        lastCO2Int = currentCO2;
-    }
+    tft.fillRect(
+        268,
+        40,
+        48,
+        10,
+        MI_NEGRO
+    );
+
+    tft.setTextSize(1);
+    uint16_t co2Color = (co2 > 1900) ? ST77XX_RED : ST77XX_WHITE;
+    tft.setTextColor(co2Color, MI_NEGRO);
+    tft.setCursor(270, 40);
+    tft.printf("CO2 %d", co2);
+
+    lastCO2 = co2;
 }
 
 void drawSoilBars() {
-    static int lastSoil1Int = -1;
-    static int lastSoil2Int = -1;
+    static int lastSoil1 = -1;
+    static int lastSoil2 = -1;
 
     const int barW = 10;
     const int barH = 45;
     const int barY = 55;
     const int bar1X = 275;
     const int bar2X = 292;
-    const int labelY = barY + barH + 4;
 
-    int soil1Int = (int)constrain(remoteSoil1, 0.0f, 100.0f);
-    int soil2Int = (int)constrain(remoteSoil2, 0.0f, 100.0f);
+    int soil1 = (int)remoteSoil1;
+    int soil2 = (int)remoteSoil2;
+    soil1 = constrain(soil1, 0, 100);
+    soil2 = constrain(soil2, 0, 100);
 
-    if (soil1Int != lastSoil1Int || soil2Int != lastSoil2Int) {
-        int fill1 = (int)((soil1Int / 100.0f) * (barH - 2));
-        int fill2 = (int)((soil2Int / 100.0f) * (barH - 2));
+    if (soil1 == lastSoil1 && soil2 == lastSoil2) return;
 
-        tft.drawRect(bar1X, barY, barW, barH, 0x8410);
-        tft.drawRect(bar2X, barY, barW, barH, 0x8410);
+    int fill1 = (int)((soil1 / 100.0f) * (barH - 2));
+    int fill2 = (int)((soil2 / 100.0f) * (barH - 2));
 
-        tft.fillRect(bar1X + 1, barY + 1, barW - 2, barH - 2, MI_NEGRO);
-        tft.fillRect(bar2X + 1, barY + 1, barW - 2, barH - 2, MI_NEGRO);
+    tft.fillRect(
+        bar1X + 1,
+        barY + 1,
+        barW - 2,
+        barH - 2,
+        MI_NEGRO
+    );
 
-        if (fill1 > 0) tft.fillRect(bar1X + 1, barY + (barH - 1 - fill1), barW - 2, fill1, ST77XX_CYAN);
-        if (fill2 > 0) tft.fillRect(bar2X + 1, barY + (barH - 1 - fill2), barW - 2, fill2, ST77XX_BLUE);
+    tft.fillRect(
+        bar2X + 1,
+        barY + 1,
+        barW - 2,
+        barH - 2,
+        MI_NEGRO
+    );
 
-        tft.setTextSize(1);
-        tft.setTextColor(MI_BLANCO, MI_NEGRO);
-        tft.setCursor(bar1X - 1, labelY);
-        tft.print("S1");
-        tft.setCursor(bar2X - 1, labelY);
-        tft.print("S2");
+    if (fill1 > 0) tft.fillRect(bar1X + 1, barY + (barH - 1 - fill1), barW - 2, fill1, ST77XX_CYAN);
+    if (fill2 > 0) tft.fillRect(bar2X + 1, barY + (barH - 1 - fill2), barW - 2, fill2, ST77XX_BLUE);
 
-        lastSoil1Int = soil1Int;
-        lastSoil2Int = soil2Int;
-    }
+    lastSoil1 = soil1;
+    lastSoil2 = soil2;
 }
 
 void loop() {
@@ -567,11 +572,12 @@ void loop() {
     }
 
     if (!showGraph && !screensaverActive) {
-        drawWeedagotchi();
-        if (millis() - lastRealtimeUpdate > 1000) {
+        static unsigned long lastRealtime = 0;
+        if (millis() - lastRealtime > 1000) {
             drawCO2();
             drawSoilBars();
-            lastRealtimeUpdate = millis();
+            drawWeedagotchi();
+            lastRealtime = millis();
         }
     }
 
@@ -761,6 +767,13 @@ void drawGameboyFrame(int x, int y, int p, int frame[19][21]) {
     for (int yy = 0; yy < 19; yy++) {
         for (int xx = 0; xx < 21; xx++) {
             if (frame[yy][xx]) {
+                tft.fillRect(
+                    x + xx * p - 1,
+                    y + yy * p - 1,
+                    p + 2,
+                    p + 2,
+                    MI_BLANCO
+                );
                 px(xx - 1, yy, dark);
                 px(xx + 1, yy, dark);
                 px(xx, yy - 1, dark);
@@ -781,12 +794,18 @@ void drawGameboyFrame(int x, int y, int p, int frame[19][21]) {
 void drawWeedagotchi() {
     static int lastSway = 999;
     static int lastMoodBucket = -1;
+    static int lastSoil1 = -1;
+    static int lastSoil2 = -1;
 
     int sway = (int)(sin(millis() * 0.0007f) * 1.0f);
-    float mood = (remoteSoil1 + remoteSoil2) * 0.5f;
+    int soil1 = constrain((int)remoteSoil1, 0, 100);
+    int soil2 = constrain((int)remoteSoil2, 0, 100);
+    float mood = (soil1 + soil2) * 0.5f;
     int moodBucket = (mood >= 60.0f) ? 0 : (mood >= 40.0f) ? 1 : (mood >= 10.0f) ? 2 : 3;
 
-    if (sway == lastSway && moodBucket == lastMoodBucket) return;
+    bool humidityChanged = (soil1 != lastSoil1) || (soil2 != lastSoil2);
+    bool swayChanged = (sway != lastSway);
+    if (!humidityChanged && !swayChanged && moodBucket == lastMoodBucket) return;
 
     if (lastSway != 999) {
         tft.fillRect(238 + lastSway, 118, 63, 57, MI_NEGRO);
@@ -804,6 +823,8 @@ void drawWeedagotchi() {
 
     lastSway = sway;
     lastMoodBucket = moodBucket;
+    lastSoil1 = soil1;
+    lastSoil2 = soil2;
 }
 
 void drawUI() {
