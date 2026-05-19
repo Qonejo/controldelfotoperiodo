@@ -64,6 +64,14 @@ typedef struct greenhouse_message {
 
 greenhouse_message greenhouseData;
 
+typedef struct soil_message {
+
+    float soil1;
+    float soil2;
+    float co2;
+
+} soil_message;
+
 // =====================================================
 // ================= MAC RECEPTOR ======================
 // =====================================================
@@ -155,6 +163,62 @@ void OnDataRecv(
     );
 
     Serial.println(macStr);
+
+    //=====================================================
+    // DATOS DEL SENSOR S1 S2 CO2
+    //=====================================================
+    if (
+        memcmp(
+            info->src_addr,
+            macSoilNode,
+            6
+        ) == 0
+        &&
+        len == sizeof(soil_message)
+    ) {
+
+        soil_message incomingSoil;
+
+        memcpy(
+            &incomingSoil,
+            incomingData,
+            sizeof(incomingSoil)
+        );
+
+        remoteSoil1 = constrain(
+            incomingSoil.soil1,
+            0.0f,
+            100.0f
+        );
+
+        remoteSoil2 = constrain(
+            incomingSoil.soil2,
+            0.0f,
+            100.0f
+        );
+
+        remoteCO2 = max(
+            incomingSoil.co2,
+            0.0f
+        );
+
+        lastEspNowReceiveMs = millis();
+
+        Serial.println(
+            "[ESP-NOW RX SOIL NODE OK]"
+        );
+
+        Serial.print("S1: ");
+        Serial.println(remoteSoil1);
+
+        Serial.print("S2: ");
+        Serial.println(remoteSoil2);
+
+        Serial.print("CO2: ");
+        Serial.println(remoteCO2);
+
+        return;
+    }
 
     if (len == sizeof(greenhouse_message)) {
         memcpy(&greenhouseData, incomingData, sizeof(greenhouseData));
