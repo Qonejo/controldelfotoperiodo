@@ -106,6 +106,7 @@ float remoteHum = 0;
 bool remoteRelay = false;
 unsigned long lastEspNowReceiveMs = 0;
 void drawWeedagotchi();
+void drawUI();
 float lastDisplayedVPD = -999.0;
 float lastDisplayedTDS = -999.0;
 float lastDisplayedSoil1 = -999.0;
@@ -387,7 +388,8 @@ void setup() {
     tft.setRotation(1); 
     tft.invertDisplay(false); 
     tft.fillScreen(MI_NEGRO);
-    
+    drawUI();
+
     ts.begin(); 
     ts.setRotation(1);
     
@@ -577,6 +579,15 @@ void loop() {
             drawWeedagotchi();
             lastRealtime = millis();
         }
+
+        static unsigned long lastUIRedraw = 0;
+
+        if (millis() - lastUIRedraw > 1000) {
+
+            drawUI();
+
+            lastUIRedraw = millis();
+        }
     }
 
     if (millis() - lastUIRefresh > 1000) {
@@ -754,59 +765,41 @@ int deadFace[19][21] = {
     {0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0}
 };
 
-void drawGameboyFrame(int x, int y, int p, int frame[19][21]) {
+void drawGameboyFrame(
+    int x,
+    int y,
+    int p,
+    int frame[19][21]
+) {
+
     uint16_t dark = 0x0320;
     uint16_t light = 0x07E0;
 
-    auto isFilled = [&](int xx, int yy) -> bool {
-        if (xx < 0 || xx >= 21 || yy < 0 || yy >= 19) return false;
-        return frame[yy][xx] == 1;
-    };
-
-    auto px = [&](int xx, int yy, uint16_t c) {
-        tft.fillRect(x + xx * p, y + yy * p, p, p, c);
-    };
-
     for (int yy = 0; yy < 19; yy++) {
+
         for (int xx = 0; xx < 21; xx++) {
-            if (!isFilled(xx, yy)) continue;
 
-            bool hasOuterGap = false;
-            for (int ny = yy - 1; ny <= yy + 1; ny++) {
-                for (int nx = xx - 1; nx <= xx + 1; nx++) {
-                    if (nx == xx && ny == yy) continue;
-                    if (!isFilled(nx, ny)) {
-                        hasOuterGap = true;
-                    }
-                }
-            }
+            if(frame[yy][xx] != 1) continue;
 
-            if (hasOuterGap) {
-                for (int ny = yy - 1; ny <= yy + 1; ny++) {
-                    for (int nx = xx - 1; nx <= xx + 1; nx++) {
-                        if (nx == xx && ny == yy) continue;
-                        if (!isFilled(nx, ny)) {
-                            px(nx, ny, MI_BLANCO);
-                        }
-                    }
-                }
-            }
+            tft.fillRect(
+                x + xx * p,
+                y + yy * p,
+                p,
+                p,
+                dark
+            );
 
-            if (!isFilled(xx - 1, yy)) px(xx - 1, yy, dark);
-            if (!isFilled(xx + 1, yy)) px(xx + 1, yy, dark);
-            if (!isFilled(xx, yy - 1)) px(xx, yy - 1, dark);
-            if (!isFilled(xx, yy + 1)) px(xx, yy + 1, dark);
-        }
-    }
-
-    for (int yy = 0; yy < 19; yy++) {
-        for (int xx = 0; xx < 21; xx++) {
-            if (isFilled(xx, yy)) {
-                px(xx, yy, light);
-            }
+            tft.fillRect(
+                x + xx * p + 1,
+                y + yy * p + 1,
+                p - 2,
+                p - 2,
+                light
+            );
         }
     }
 }
+
 
 void drawWeedagotchi() {
     static int lastSway = 999;
