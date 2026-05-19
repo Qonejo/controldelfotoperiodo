@@ -769,21 +769,21 @@ void drawUI() {
         (remoteSoil1 + remoteSoil2) * 0.5f;
 
     tft.fillRect(
-        255,
-        105,
-        60,
-        60,
+        240,
+        100,
+        80,
+        80,
         MI_NEGRO
     );
 
     drawGameboyHeart(
-        268 + sway,
-        112,
-        2
+        255 + sway,
+        130,
+        4
     );
 
-    int faceX = 268 + sway;
-    int eyeY = 124;
+    int faceX = 255 + sway;
+    int eyeY = 145;
     uint16_t faceCol = 0x9FF3;
 
     if (mood >= 60.0f) {
