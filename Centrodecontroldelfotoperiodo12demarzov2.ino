@@ -141,11 +141,6 @@ void OnDataRecv(
     const uint8_t *incomingData,
     int len
 ) {
-    Serial.print("RX SIZE: ");
-    Serial.println(len);
-    Serial.print("EXPECTED: ");
-    Serial.println(sizeof(greenhouse_message));
-
     Serial.print("FROM: ");
 
     char macStr[18];
@@ -167,15 +162,7 @@ void OnDataRecv(
     //=====================================================
     // DATOS DEL SENSOR S1 S2 CO2
     //=====================================================
-    if (
-        memcmp(
-            info->src_addr,
-            macSoilNode,
-            6
-        ) == 0
-        &&
-        len == sizeof(soil_message)
-    ) {
+    if (len == sizeof(soil_message)) {
 
         soil_message incomingSoil;
 
@@ -203,19 +190,6 @@ void OnDataRecv(
         );
 
         lastEspNowReceiveMs = millis();
-
-        Serial.println(
-            "[ESP-NOW RX SOIL NODE OK]"
-        );
-
-        Serial.print("S1: ");
-        Serial.println(remoteSoil1);
-
-        Serial.print("S2: ");
-        Serial.println(remoteSoil2);
-
-        Serial.print("CO2: ");
-        Serial.println(remoteCO2);
 
         return;
     }
@@ -585,10 +559,10 @@ void loop() {
     }
 
     if (!showGraph && !screensaverActive) {
-        drawVPD();
-        drawTDS();
-        drawCO2();
-        drawSoilBars();
+        // drawVPD();
+        // drawTDS();
+        // drawCO2();
+        // drawSoilBars();
     }
 
     if (millis() - lastUIRefresh > 1000) {
