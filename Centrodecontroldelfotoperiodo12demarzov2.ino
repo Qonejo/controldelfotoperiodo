@@ -328,14 +328,14 @@ void setup() {
     Serial.print("MAC EMISOR: ");
     Serial.println(WiFi.macAddress());
 
-    WiFi.begin(ssid, password);
-    while (WiFi.status() != WL_CONNECTED) {
-        delay(500);
-    }
-
-    wifiChannel = WiFi.channel();
-    Serial.print("WIFI CHANNEL: ");
-    Serial.println(wifiChannel);
+    // WiFi.begin(ssid, password);
+    // while (WiFi.status() != WL_CONNECTED) {
+    //     delay(500);
+    // }
+    //
+    // wifiChannel = WiFi.channel();
+    // Serial.print("WIFI CHANNEL: ");
+    // Serial.println(wifiChannel);
 
 
     // =====================================================
@@ -356,7 +356,7 @@ void setup() {
         peerInfo.peer_addr,
         macInvernadero,
         6);
-    peerInfo.channel = wifiChannel;
+    peerInfo.channel = 0;
     peerInfo.encrypt = false;
     if (esp_now_add_peer(&peerInfo)
         != ESP_OK) {
@@ -365,7 +365,7 @@ void setup() {
     }
     esp_now_peer_info_t peerInfo2 = {};
     memcpy(peerInfo2.peer_addr, macSoilNode, 6);
-    peerInfo2.channel = wifiChannel;
+    peerInfo2.channel = 0;
     peerInfo2.encrypt = false;
     if (esp_now_add_peer(&peerInfo2) != ESP_OK) {
         Serial.println("PEER2 ERROR");
@@ -373,7 +373,7 @@ void setup() {
     }
     esp_now_peer_info_t peerInfo3 = {};
     memcpy(peerInfo3.peer_addr, macCalendarioESP, 6);
-    peerInfo3.channel = wifiChannel;
+    peerInfo3.channel = 0;
     peerInfo3.encrypt = false;
     if (esp_now_add_peer(&peerInfo3) != ESP_OK) {
         Serial.println("PEER3 ERROR");
