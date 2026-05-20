@@ -766,9 +766,49 @@ void drawGameboyFrame(
     uint16_t dark  = 0x0320;
     uint16_t light = 0x07E0;
 
-    // =========================
-    // RELLENO VERDE
-    // =========================
+    // =====================================
+    // OUTLINE PIXEL PERFECT
+    // =====================================
+    for (int yy = 0; yy < 19; yy++) {
+
+        for (int xx = 0; xx < 21; xx++) {
+
+            if (frame[yy][xx] != 1)
+                continue;
+
+            int px = x + xx * p;
+            int py = y + yy * p;
+
+            // vecinos
+            bool up    = (yy > 0  && frame[yy - 1][xx] == 1);
+            bool down  = (yy < 18 && frame[yy + 1][xx] == 1);
+            bool left  = (xx > 0  && frame[yy][xx - 1] == 1);
+            bool right = (xx < 20 && frame[yy][xx + 1] == 1);
+
+            // =====================================
+            // OUTLINE SOLO AFUERA
+            // =====================================
+            if (!up) {
+                tft.fillRect(px, py, p, 1, dark);
+            }
+
+            if (!down) {
+                tft.fillRect(px, py + p - 1, p, 1, dark);
+            }
+
+            if (!left) {
+                tft.fillRect(px, py, 1, p, dark);
+            }
+
+            if (!right) {
+                tft.fillRect(px + p - 1, py, 1, p, dark);
+            }
+        }
+    }
+
+    // =====================================
+    // RELLENO VERDE ENCIMA
+    // =====================================
     for (int yy = 0; yy < 19; yy++) {
 
         for (int xx = 0; xx < 21; xx++) {
@@ -780,47 +820,12 @@ void drawGameboyFrame(
             int py = y + yy * p;
 
             tft.fillRect(
-                px,
-                py,
-                p,
-                p,
+                px + 1,
+                py + 1,
+                p - 2,
+                p - 2,
                 light
             );
-        }
-    }
-
-    // =========================
-    // CONTORNO EXTERIOR
-    // =========================
-    for (int yy = 0; yy < 19; yy++) {
-
-        for (int xx = 0; xx < 21; xx++) {
-
-            if (frame[yy][xx] != 1)
-                continue;
-
-            int px = x + xx * p;
-            int py = y + yy * p;
-
-            // arriba
-            if (yy == 0 || frame[yy - 1][xx] == 0) {
-                tft.drawLine(px, py, px + p - 1, py, dark);
-            }
-
-            // abajo
-            if (yy == 18 || frame[yy + 1][xx] == 0) {
-                tft.drawLine(px, py + p - 1, px + p - 1, py + p - 1, dark);
-            }
-
-            // izquierda
-            if (xx == 0 || frame[yy][xx - 1] == 0) {
-                tft.drawLine(px, py, px, py + p - 1, dark);
-            }
-
-            // derecha
-            if (xx == 20 || frame[yy][xx + 1] == 0) {
-                tft.drawLine(px + p - 1, py, px + p - 1, py + p - 1, dark);
-            }
         }
     }
 }
