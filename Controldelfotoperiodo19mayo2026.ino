@@ -756,76 +756,30 @@ int deadFace[19][21] = {
     {0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0}
 };
 
-void drawGameboyFrame(
-    int x,
-    int y,
-    int p,
-    int frame[19][21]
-) {
-
-    uint16_t dark  = 0x0320;
+void drawGameboyFrame(int x, int y, int p, int frame[19][21]) {
+    uint16_t dark = 0x0320;
     uint16_t light = 0x07E0;
 
-    // =====================================
-    // OUTLINE PIXEL PERFECT
-    // =====================================
+    auto px = [&](int xx, int yy, uint16_t c) {
+        tft.fillRect(x + xx * p, y + yy * p, p, p, c);
+    };
+
     for (int yy = 0; yy < 19; yy++) {
-
         for (int xx = 0; xx < 21; xx++) {
-
-            if (frame[yy][xx] != 1)
-                continue;
-
-            int px = x + xx * p;
-            int py = y + yy * p;
-
-            // vecinos
-            bool up    = (yy > 0  && frame[yy - 1][xx] == 1);
-            bool down  = (yy < 18 && frame[yy + 1][xx] == 1);
-            bool left  = (xx > 0  && frame[yy][xx - 1] == 1);
-            bool right = (xx < 20 && frame[yy][xx + 1] == 1);
-
-            // =====================================
-            // OUTLINE SOLO AFUERA
-            // =====================================
-            if (!up) {
-                tft.fillRect(px, py, p, 1, dark);
-            }
-
-            if (!down) {
-                tft.fillRect(px, py + p - 1, p, 1, dark);
-            }
-
-            if (!left) {
-                tft.fillRect(px, py, 1, p, dark);
-            }
-
-            if (!right) {
-                tft.fillRect(px + p - 1, py, 1, p, dark);
+            if (frame[yy][xx]) {
+                px(xx - 1, yy, dark);
+                px(xx + 1, yy, dark);
+                px(xx, yy - 1, dark);
+                px(xx, yy + 1, dark);
             }
         }
     }
 
-    // =====================================
-    // RELLENO VERDE ENCIMA
-    // =====================================
     for (int yy = 0; yy < 19; yy++) {
-
         for (int xx = 0; xx < 21; xx++) {
-
-            if (frame[yy][xx] != 1)
-                continue;
-
-            int px = x + xx * p;
-            int py = y + yy * p;
-
-            tft.fillRect(
-                px + 1,
-                py + 1,
-                p - 2,
-                p - 2,
-                light
-            );
+            if (frame[yy][xx]) {
+                px(xx, yy, light);
+            }
         }
     }
 }
