@@ -163,6 +163,7 @@ void OnDataRecv(
     //=====================================================
     // DATOS DEL SENSOR S1 S2 CO2
     //=====================================================
+    
     if (len == sizeof(soil_message)) {
 
         soil_message incomingSoil;
@@ -174,50 +175,89 @@ void OnDataRecv(
         );
 
         remoteSoil1 = constrain(
-            incomingSoil.soil1,
+          incomingSoil.soil1,
+          0.0f,
+          100.0f
+        );
+
+        remoteSoil2 = constrain(
+          incomingSoil.soil2,
+          0.0f,
+          100.0f
+        );
+
+        remoteCO2 = max(
+          incomingSoil.co2,
+          0.0f
+        );
+
+        // FORZAR REDIBUJO
+        lastDisplayedSoil1 = -999;
+        lastDisplayedSoil2 = -999;
+        lastDisplayedCO2 = -999;
+
+        lastEspNowReceiveMs = millis();
+
+        Serial.println("[ESP RX SOIL]");
+        Serial.printf("S1 %.1f\n", remoteSoil1);
+        Serial.printf("S2 %.1f\n", remoteSoil2);
+        Serial.printf("CO2 %.0f\n", remoteCO2);
+
+        return;
+    }
+
+
+    if (len == sizeof(greenhouse_message)) {
+
+        greenhouse_message incoming;
+
+        memcpy(
+            &incoming,
+            incomingData,
+            sizeof(incoming)
+        );
+
+        remoteVPD = incoming.vpd;
+        remoteTDS = incoming.tds;
+
+        remoteSoil1 = constrain(
+            incoming.soil1,
             0.0f,
             100.0f
         );
 
         remoteSoil2 = constrain(
-            incomingSoil.soil2,
+            incoming.soil2,
             0.0f,
             100.0f
         );
 
-        remoteCO2 = max(
-            incomingSoil.co2,
-            0.0f
+        remoteCO2 =
+            max(
+               incoming.co2,
+               0.0f
+            );
+
+        remoteTemp = incoming.airTemp;
+        remoteHum = incoming.airHum;
+
+        remoteRelay =
+            incoming.relayState;
+
+        // FORZAR REFRESH
+        lastDisplayedVPD = -999;
+        lastDisplayedTDS = -999;
+        lastDisplayedSoil1 = -999;
+        lastDisplayedSoil2 = -999;
+        lastDisplayedCO2 = -999;
+
+        lastEspNowReceiveMs =
+            millis();
+
+        Serial.println(
+            "[ESP RX GREENHOUSE]"
         );
 
-        lastEspNowReceiveMs = millis();
-
-        return;
-    }
-
-    if (len == sizeof(greenhouse_message)) {
-        memcpy(&greenhouseData, incomingData, sizeof(greenhouseData));
-        remoteVPD = greenhouseData.vpd;
-        remoteTDS = greenhouseData.tds;
-        remotePH = greenhouseData.ph;
-        remoteSoil1 = greenhouseData.soil1;
-        remoteSoil2 = greenhouseData.soil2;
-        remoteCO2 = greenhouseData.co2;
-        remoteTemp = greenhouseData.airTemp;
-        remoteHum = greenhouseData.airHum;
-        remoteRelay = greenhouseData.relayState;
-        lastEspNowReceiveMs = millis();
-        Serial.println("[ESP-NOW RX greenhouse_message OK]");
-        Serial.print("VPD: ");
-        Serial.println(remoteVPD);
-        Serial.print("TDS: ");
-        Serial.println(remoteTDS);
-        Serial.print("CO2: ");
-        Serial.println(remoteCO2);
-        Serial.print("TEMP: ");
-        Serial.println(remoteTemp);
-        Serial.print("HUM: ");
-        Serial.println(remoteHum);
         return;
     }
 
@@ -460,72 +500,176 @@ void drawTDS() {
     }
 }
 
-void drawCO2() {
-    if (
-        fabs(remoteCO2 - lastDisplayedCO2) > 0.2f ||
-        millis() - lastCO2Draw > 500
-    ) {
-        tft.setTextSize(1);
-        uint16_t co2Color = (remoteCO2 > 1900.0f) ? ST77XX_RED : ST77XX_WHITE;
-        tft.setTextColor(co2Color, MI_NEGRO);
-        tft.fillRect(
-            268,
-            40,
-            52,
-            10,
-            MI_NEGRO
-        );
-        tft.setCursor(270, 40);
-        tft.printf("CO2 %.0f", remoteCO2);
 
-        lastDisplayedCO2 = remoteCO2;
-        lastCO2Draw = millis();
+void drawCO2() {
+
+    if (
+        fabs(remoteCO2 - lastDisplayedCO2) < 1.0f
+        &&
+        millis() - lastCO2Draw < 250
+    ) return;
+
+    tft.fillRect(
+        266,
+        38,
+        54,
+        12,
+        MI_NEGRO
+    );
+
+    tft.setTextSize(1);
+
+    uint16_t co2Color =
+        (
+            remoteCO2 > 1900
+        )
+        ?
+        ST77XX_RED
+        :
+        ST77XX_WHITE;
+
+    tft.setTextColor(
+        co2Color,
+        MI_NEGRO
+    );
+
+    tft.setCursor(
+        270,
+        40
+    );
+
+    tft.printf(
+        "CO2 %.0f",
+        remoteCO2
+    );
+
+    lastDisplayedCO2 =
+        remoteCO2;
+
+    lastCO2Draw =
+        millis();
     }
 }
 
-void drawSoilBars() {
-    if (
-        fabs(remoteSoil1 - lastDisplayedSoil1) > 0.2f ||
-        fabs(remoteSoil2 - lastDisplayedSoil2) > 0.2f ||
-        millis() - lastSoilDraw > 500
-    ) {
-        const int barW = 10;
-        const int barH = 45;
-        const int barY = 55;
-        const int bar1X = 275;
-        const int bar2X = 292;
-        const int labelY = barY + barH + 4;
 
-        float soil1 = constrain(remoteSoil1, 0.0f, 100.0f);
-        float soil2 = constrain(remoteSoil2, 0.0f, 100.0f);
-        int fill1 = (int)((soil1 / 100.0f) * (barH - 2));
-        int fill2 = (int)((soil2 / 100.0f) * (barH - 2));
+void drawSoilBars() {
+
+    if (
+        fabs(
+            remoteSoil1
+            -
+            lastDisplayedSoil1
+        ) < 0.5f
+        &&
+        fabs(
+            remoteSoil2
+            -
+            lastDisplayedSoil2
+        ) < 0.5f
+    ) return;
+
+    const int barW = 10;
+    const int barH = 45;
+
+    const int barY = 55;
+
+    const int bar1X = 275;
+    const int bar2X = 292;
+
+    auto drawBar =
+    [&](int x,float value,uint16_t c)
+    {
+
+        value =
+        constrain(
+            value,
+            0,
+            100
+        );
+
+        int fill =
+        (
+            barH
+            *
+            value
+        )
+        /
+        100;
 
         tft.fillRect(
-            274,
-            55,
-            28,
-            55,
+            x,
+            barY,
+            barW,
+            barH,
             MI_NEGRO
         );
 
-        tft.drawRect(bar1X, barY, barW, barH, 0x8410);
-        tft.drawRect(bar2X, barY, barW, barH, 0x8410);
+        tft.drawRect(
+            x,
+            barY,
+            barW,
+            barH,
+            0x8410
+        );
 
-        if (fill1 > 0) tft.fillRect(bar1X + 1, barY + (barH - 1 - fill1), barW - 2, fill1, ST77XX_CYAN);
-        if (fill2 > 0) tft.fillRect(bar2X + 1, barY + (barH - 1 - fill2), barW - 2, fill2, ST77XX_BLUE);
+        if(fill>0)
+        {
+            tft.fillRect(
+                x+1,
+                barY+
+                (
+                    barH
+                    -
+                    fill
+                ),
+                barW-2,
+                fill-1,
+                c
+            );
+        }
+    };
 
-        tft.setTextSize(1);
-        tft.setTextColor(MI_BLANCO, MI_NEGRO);
-        tft.setCursor(bar1X - 1, labelY);
-        tft.print("S1");
-        tft.setCursor(bar2X - 1, labelY);
-        tft.print("S2");
+    drawBar(
+        bar1X,
+        remoteSoil1,
+        ST77XX_CYAN
+    );
 
+    drawBar(
+        bar2X,
+        remoteSoil2,
+        ST77XX_BLUE
+    );
 
-        lastDisplayedSoil1 = remoteSoil1;
-        lastDisplayedSoil2 = remoteSoil2;
-        lastSoilDraw = millis();
+    tft.setTextSize(1);
+
+    tft.setTextColor(
+        MI_BLANCO,
+        MI_NEGRO
+    );
+
+    tft.setCursor(
+        274,
+        104
+    );
+
+    tft.print("S1");
+
+    tft.setCursor(
+        291,
+        104
+    );
+
+    tft.print("S2");
+
+    lastDisplayedSoil1 =
+        remoteSoil1;
+
+    lastDisplayedSoil2 =
+        remoteSoil2;
+
+    lastSoilDraw =
+        millis();
     }
 }
 
@@ -582,14 +726,55 @@ void loop() {
     }
 
     if (millis() - lastUIRefresh > 1000) {
-        if (isNight && (millis() - lastTouchTime > 30000)) {
-            drawScreensaver();
+
+        if (
+            isNight
+            &&
+            (
+            millis()
+            -
+            lastTouchTime
+            >
+            30000
+        )
+    ) {
+
+        drawScreensaver();
+
+    } else {
+
+        screensaverActive = false;
+
+        if (!showGraph) {
+
+            static unsigned long lastFullUI = 0;
+
+            if (
+                millis()
+                -
+                lastFullUI
+                >
+                5000
+            ) {
+
+                drawUI();
+
+                lastFullUI =
+                    millis();
+
+            }
+
         } else {
-            screensaverActive = false; 
-            if (!showGraph) drawUI(); else drawGraph();
+
+            drawGraph();
+
         }
-        
-        lastUIRefresh = millis();
+
+    }
+
+    lastUIRefresh =
+        millis();
+
         // =====================================================
         // ================= ESP NOW SEND ======================
         // =====================================================
