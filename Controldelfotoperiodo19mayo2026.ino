@@ -19,7 +19,7 @@
 
 #define MI_NEGRO 0x0000
 #define MI_BLANCO 0xFFFF
-#define MI_MORADO 0xA01F
+#define MI_MORADO 0xFFE0
 #define MI_NARANJA 0xFD20
 
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
@@ -665,7 +665,7 @@ void printStyled(int x, int y, String label, String value, uint16_t valCol, int 
     if (arrows) { tft.setTextColor(ST77XX_RED, MI_NEGRO); tft.print("< "); }
     tft.setTextColor(MI_BLANCO, MI_NEGRO); tft.print(label);
     tft.setTextColor(valCol, MI_NEGRO); tft.print(value);
-    if (arrows) { tft.setTextColor(ST77XX_RED, MI_NEGRO); tft.print(" >"); }
+    if (arrows) { tft.setTextColor(ST77XX_RED, MI_NEGRO); tft.print(">"); }
 }
 
 int happyFace[19][21] = {
