@@ -766,33 +766,61 @@ void drawGameboyFrame(
     uint16_t dark  = 0x0320;
     uint16_t light = 0x07E0;
 
-    for(int yy = 0; yy < 19; yy++) {
+    // =========================
+    // RELLENO VERDE
+    // =========================
+    for (int yy = 0; yy < 19; yy++) {
 
-        for(int xx = 0; xx < 21; xx++) {
+        for (int xx = 0; xx < 21; xx++) {
 
-            if(frame[yy][xx] != 1)
+            if (frame[yy][xx] != 1)
                 continue;
 
             int px = x + xx * p;
             int py = y + yy * p;
 
-            // borde oscuro fino
-            tft.drawRect(
+            tft.fillRect(
                 px,
                 py,
                 p,
                 p,
-                dark
-            );
-
-            // relleno verde
-            tft.fillRect(
-                px + 1,
-                py + 1,
-                p - 2,
-                p - 2,
                 light
             );
+        }
+    }
+
+    // =========================
+    // CONTORNO EXTERIOR
+    // =========================
+    for (int yy = 0; yy < 19; yy++) {
+
+        for (int xx = 0; xx < 21; xx++) {
+
+            if (frame[yy][xx] != 1)
+                continue;
+
+            int px = x + xx * p;
+            int py = y + yy * p;
+
+            // arriba
+            if (yy == 0 || frame[yy - 1][xx] == 0) {
+                tft.drawLine(px, py, px + p - 1, py, dark);
+            }
+
+            // abajo
+            if (yy == 18 || frame[yy + 1][xx] == 0) {
+                tft.drawLine(px, py + p - 1, px + p - 1, py + p - 1, dark);
+            }
+
+            // izquierda
+            if (xx == 0 || frame[yy][xx - 1] == 0) {
+                tft.drawLine(px, py, px, py + p - 1, dark);
+            }
+
+            // derecha
+            if (xx == 20 || frame[yy][xx + 1] == 0) {
+                tft.drawLine(px + p - 1, py, px + p - 1, py + p - 1, dark);
+            }
         }
     }
 }
