@@ -545,7 +545,7 @@ void drawCO2() {
     if (
         fabs(remoteCO2 - lastDisplayedCO2) < 1.0f
         &&
-        millis() - lastCO2Draw < 250
+        millis() - lastCO2Draw < 100
     ) return;
 
     tft.fillRect(
@@ -598,13 +598,15 @@ void drawSoilBars() {
             remoteSoil1
             -
             lastDisplayedSoil1
-        ) < 0.5f
+        ) < 0.1f
         &&
         fabs(
             remoteSoil2
             -
             lastDisplayedSoil2
-        ) < 0.5f
+        ) < 0.1f
+        &&
+        millis() - lastSoilDraw < 120
     ) return;
 
     const int barW = 10;
@@ -937,30 +939,81 @@ int deadFace[19][21] = {
     {0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0}
 };
 
-void drawGameboyFrame(int x, int y, int p, int frame[19][21]) {
-    uint16_t dark = 0x0320;
+void drawGameboyFrame(
+    int x,
+    int y,
+    int p,
+    int frame[19][21]
+) {
+
+    uint16_t dark  = 0x0320;
     uint16_t light = 0x07E0;
 
-    auto px = [&](int xx, int yy, uint16_t c) {
-        tft.fillRect(x + xx * p, y + yy * p, p, p, c);
-    };
+    // =========================
+    // OUTLINE EXTERIOR
+    // =========================
 
     for (int yy = 0; yy < 19; yy++) {
+
         for (int xx = 0; xx < 21; xx++) {
-            if (frame[yy][xx]) {
-                px(xx - 1, yy, dark);
-                px(xx + 1, yy, dark);
-                px(xx, yy - 1, dark);
-                px(xx, yy + 1, dark);
-            }
+
+            if (!frame[yy][xx])
+                continue;
+
+            int px = x + xx * p;
+            int py = y + yy * p;
+
+            bool up =
+                yy > 0 &&
+                frame[yy - 1][xx];
+
+            bool down =
+                yy < 18 &&
+                frame[yy + 1][xx];
+
+            bool left =
+                xx > 0 &&
+                frame[yy][xx - 1];
+
+            bool right =
+                xx < 20 &&
+                frame[yy][xx + 1];
+
+            if (!up)
+                tft.fillRect(px, py, p, 1, dark);
+
+            if (!down)
+                tft.fillRect(px, py + p - 1, p, 1, dark);
+
+            if (!left)
+                tft.fillRect(px, py, 1, p, dark);
+
+            if (!right)
+                tft.fillRect(px + p - 1, py, 1, p, dark);
         }
     }
 
+    // =========================
+    // RELLENO
+    // =========================
+
     for (int yy = 0; yy < 19; yy++) {
+
         for (int xx = 0; xx < 21; xx++) {
-            if (frame[yy][xx]) {
-                px(xx, yy, light);
-            }
+
+            if (!frame[yy][xx])
+                continue;
+
+            int px = x + xx * p;
+            int py = y + yy * p;
+
+            tft.fillRect(
+                px + 1,
+                py + 1,
+                p - 2,
+                p - 2,
+                light
+            );
         }
     }
 }
@@ -970,7 +1023,7 @@ void drawWeedagotchi() {
     static int lastSway = 999;
     static int lastMoodBucket = -1;
     static unsigned long lastAnimMs = 0;
-    if (millis() - lastAnimMs < 130) return;
+    if (millis() - lastAnimMs < 220) return;
     lastAnimMs = millis();
     frame = (frame + 1) % 4;
     int sway = (frame < 2) ? 0 : 1;
@@ -979,8 +1032,13 @@ void drawWeedagotchi() {
 
     if (sway == lastSway && moodBucket == lastMoodBucket) return;
 
-    tft.fillRect(236, 116, 6, 60, MI_NEGRO);
-    tft.fillRect(296, 116, 6, 60, MI_NEGRO);
+    tft.fillRect(
+        236,
+        116,
+        66,
+        60,
+        MI_NEGRO
+    );
 
     if (moodBucket == 0) {
         drawGameboyFrame(238 + sway, 118, 3, happyFace);
