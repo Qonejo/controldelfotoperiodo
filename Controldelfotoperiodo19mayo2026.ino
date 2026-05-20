@@ -548,7 +548,7 @@ void drawCO2() {
 
     lastCO2Draw =
         millis();
-    }
+   
 }
 
 
@@ -670,7 +670,7 @@ void drawSoilBars() {
 
     lastSoilDraw =
         millis();
-    }
+    
 }
 
 void loop() {
@@ -731,49 +731,56 @@ void loop() {
             isNight
             &&
             (
-            millis()
-            -
-            lastTouchTime
-            >
-            30000
-        )
-    ) {
-
-        drawScreensaver();
-
-    } else {
-
-        screensaverActive = false;
-
-        if (!showGraph) {
-
-            static unsigned long lastFullUI = 0;
-
-            if (
                 millis()
                 -
-                lastFullUI
+                lastTouchTime
                 >
-                5000
-            ) {
+                30000
+            )
+        ) {
 
-                drawUI();
-
-                lastFullUI =
-                    millis();
-
-            }
+            drawScreensaver();
 
         } else {
 
-            drawGraph();
+            if (screensaverActive) {
+                screensaverActive = false;
+
+
+                tft.fillScreen(MI_NEGRO);
+                drawUI();
+
+            }
+
+            if (!showGraph) {
+
+               static unsigned long lastFullUI = 0;
+
+               if (
+                   millis()
+                   -
+                   lastFullUI
+                   >
+                   5000
+               ) {
+
+                   drawUI();
+
+                   lastFullUI =
+                       millis();
+
+               }
+
+            } else {
+
+                drawGraph();
+
+            }
 
         }
 
-    }
-
-    lastUIRefresh =
-        millis();
+        lastUIRefresh =
+            millis();
 
         // =====================================================
         // ================= ESP NOW SEND ======================
