@@ -756,30 +756,43 @@ int deadFace[19][21] = {
     {0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0}
 };
 
-void drawGameboyFrame(int x, int y, int p, int frame[19][21]) {
-    uint16_t dark = 0x0320;
+void drawGameboyFrame(
+    int x,
+    int y,
+    int p,
+    int frame[19][21]
+) {
+
+    uint16_t dark  = 0x0320;
     uint16_t light = 0x07E0;
 
-    auto px = [&](int xx, int yy, uint16_t c) {
-        tft.fillRect(x + xx * p, y + yy * p, p, p, c);
-    };
+    for(int yy = 0; yy < 19; yy++) {
 
-    for (int yy = 0; yy < 19; yy++) {
-        for (int xx = 0; xx < 21; xx++) {
-            if (frame[yy][xx]) {
-                px(xx - 1, yy, dark);
-                px(xx + 1, yy, dark);
-                px(xx, yy - 1, dark);
-                px(xx, yy + 1, dark);
-            }
-        }
-    }
+        for(int xx = 0; xx < 21; xx++) {
 
-    for (int yy = 0; yy < 19; yy++) {
-        for (int xx = 0; xx < 21; xx++) {
-            if (frame[yy][xx]) {
-                px(xx, yy, light);
-            }
+            if(frame[yy][xx] != 1)
+                continue;
+
+            int px = x + xx * p;
+            int py = y + yy * p;
+
+            // borde oscuro fino
+            tft.drawRect(
+                px,
+                py,
+                p,
+                p,
+                dark
+            );
+
+            // relleno verde
+            tft.fillRect(
+                px + 1,
+                py + 1,
+                p - 2,
+                p - 2,
+                light
+            );
         }
     }
 }
