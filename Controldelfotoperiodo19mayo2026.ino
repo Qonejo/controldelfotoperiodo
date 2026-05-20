@@ -114,6 +114,18 @@ unsigned long lastVpdDraw = 0;
 unsigned long lastTdsDraw = 0;
 unsigned long lastSoilDraw = 0;
 unsigned long lastCO2Draw = 0;
+bool uiNeedsFullRedraw = true;
+bool uiStaticDrawn = false;
+bool dirtyClock = true, dirtyProgress = true, dirtySensors = true, dirtyCounters = true;
+bool stateDirty = false;
+unsigned long lastStateChangeMs = 0;
+unsigned long lastTouchPollMs = 0;
+unsigned long lastTouchRepeatMs = 0;
+bool touchHeld = false;
+unsigned long lastTimeCacheMs = 0;
+struct tm cachedTime = {};
+bool cachedTimeValid = false;
+unsigned long perfLoopAccumUs = 0, perfRenderAccumUs = 0, perfLoopCount = 0, perfFrames = 0, perfLastReportMs = 0;
 
 // Variables Salvapantallas
 bool screensaverActive = false;
@@ -266,14 +278,40 @@ void loadHistory() {
 }
 
 void saveState() {
-    SD.remove("/estado.txt");
-    File file = SD.open("/estado.txt", FILE_WRITE);
+        File file = SD.open("/estado.txt", FILE_WRITE);
     if (file) {
         file.printf("%d,%d,%d,%d,%d,%.2f,%.2f,%d", lightHours, darkHours, (isVegetative ? 1 : 0), daysVeg, daysFlower, photoSecondsElapsed, remoteVPD, (inLightMode ? 1 : 0));
         file.close();
         saveHistory();
         Serial.println("[SD] Estado guardado");
     }
+}
+
+void markStateDirty() {
+    stateDirty = true;
+    lastStateChangeMs = millis();
+}
+
+void markUiDirty(bool full = false) {
+    if (full) {
+        uiNeedsFullRedraw = true;
+        uiStaticDrawn = false;
+    }
+    dirtyClock = true;
+    dirtyProgress = true;
+    dirtySensors = true;
+    dirtyCounters = true;
+}
+
+bool getCachedLocalTime(struct tm *out) {
+    unsigned long now = millis();
+    if (!cachedTimeValid || now - lastTimeCacheMs >= 1000) {
+        cachedTimeValid = getLocalTime(&cachedTime);
+        lastTimeCacheMs = now;
+        dirtyClock = true;
+    }
+    if (cachedTimeValid) *out = cachedTime;
+    return cachedTimeValid;
 }
 
 void loadState() {
@@ -298,25 +336,10 @@ void loadState() {
 }
 
 void handleAutoSave() {
-    static int prevLightHours = lightHours;
-    static int prevDarkHours = darkHours;
-    static bool prevVegetative = isVegetative;
-    static bool prevLightMode = inLightMode;
-    static float prevHistoryLast = history[23];
-
-    bool configChanged = (lightHours != prevLightHours) || (darkHours != prevDarkHours) || (isVegetative != prevVegetative);
-    bool phaseChanged = (inLightMode != prevLightMode);
-    bool historyChanged = fabs(history[23] - prevHistoryLast) > 0.001f;
-    bool timeElapsed = millis() - lastAutoSave > 60000;
-
-    if (configChanged || phaseChanged || historyChanged || timeElapsed) {
+    if (!stateDirty) return;
+    if (millis() - lastStateChangeMs >= 15000) {
         saveState();
-        lastAutoSave = millis();
-        prevLightHours = lightHours;
-        prevDarkHours = darkHours;
-        prevVegetative = isVegetative;
-        prevLightMode = inLightMode;
-        prevHistoryLast = history[23];
+        stateDirty = false;
     }
 }
 
@@ -415,7 +438,7 @@ void drawScreensaver() {
     if (millis() - lastMove > 30000 || screensaverActive == false) {
         tft.fillScreen(MI_NEGRO);
         struct tm ti;
-        if (getLocalTime(&ti)) {
+        if (getCachedLocalTime(&ti)) {
             char b[12];
             strftime(b, 12, "%I:%M %p", &ti);
             tft.setTextSize(2);
@@ -530,6 +553,7 @@ void drawSoilBars() {
 }
 
 void loop() {
+    unsigned long loopStartUs = micros();
     updatePhotoperiod(); 
 
     // --- RECONEXIÓN WIFI SILENCIOSA (Cada 30 seg) ---
@@ -543,50 +567,42 @@ void loop() {
 
     struct tm ti;
     bool isNight = false;
-    if (getLocalTime(&ti)) {
+    if (getCachedLocalTime(&ti)) {
         if (ti.tm_hour >= 0 && ti.tm_hour < 8) isNight = true;
     }
 
-    if (ts.touched()) {
-        lastTouchTime = millis();
-        if (screensaverActive) {
-            screensaverActive = false;
-            tft.fillScreen(MI_NEGRO);
-            drawUI();
+    if (millis() - lastTouchPollMs >= 25) {
+        lastTouchPollMs = millis();
+        if (ts.touched()) {
+            lastTouchTime = millis();
+            TS_Point p = ts.getPoint();
+            int tx = map(p.y, 200, 3800, 320, 0);
+            int ty = map(p.x, 200, 3800, 0, 240);
+            if (screensaverActive) {
+                screensaverActive = false;
+                markUiDirty(true);
+            }
+            if (!touchHeld) {
+                touchHeld = true;
+                touchStartTime = millis();
+                lastTouchRepeatMs = millis();
+                handleAction(tx, ty, 1);
+            } else if (millis() - touchStartTime > 400 && millis() - lastTouchRepeatMs > 120) {
+                lastTouchRepeatMs = millis();
+                handleAction(tx, ty, (millis() - touchStartTime > 1000) ? 3 : 1);
+            }
+        } else {
+            touchHeld = false;
+            touchStartTime = 0;
         }
-
-        TS_Point p = ts.getPoint();
-        int tx = map(p.y, 200, 3800, 320, 0); 
-        int ty = map(p.x, 200, 3800, 0, 240);
-        
-        if (touchStartTime == 0) {
-            touchStartTime = millis();
-            handleAction(tx, ty, 1); 
-        } else if (millis() - touchStartTime > 1000) {
-            handleAction(tx, ty, 3); 
-            delay(100); 
-        } else if (millis() - touchStartTime > 400) {
-            handleAction(tx, ty, 1); 
-            delay(120);
-        }
-    } else {
-        touchStartTime = 0;
     }
 
-    if (!showGraph && !screensaverActive) {
-        drawVPD();
-        drawTDS();
-        drawCO2();
-        drawSoilBars();
-        drawWeedagotchi();
-    }
-
-    if (millis() - lastUIRefresh > 1000) {
+        if (millis() - lastUIRefresh > 1000) {
         if (isNight && (millis() - lastTouchTime > 30000)) {
             drawScreensaver();
         } else {
             screensaverActive = false; 
-            if (!showGraph) drawUI(); else drawGraph();
+            if (!showGraph) renderUIIncremental(); else drawGraph();
         }
         
         lastUIRefresh = millis();
@@ -594,7 +610,7 @@ void loop() {
         // ================= ESP NOW SEND ======================
         // =====================================================
         struct tm ti2;
-        if (getLocalTime(&ti2)) {
+        if (getCachedLocalTime(&ti2)) {
             growData.hour = ti2.tm_hour;
             growData.minute = ti2.tm_min;
             growData.second = ti2.tm_sec;
@@ -629,6 +645,16 @@ void loop() {
 
         handleAutoSave();
     }
+    perfLoopAccumUs += micros() - loopStartUs;
+    perfLoopCount++;
+    if (millis() - perfLastReportMs >= 5000) {
+        float loopMs = (perfLoopCount > 0) ? (perfLoopAccumUs / 1000.0f / perfLoopCount) : 0.0f;
+        float renderMs = (perfFrames > 0) ? (perfRenderAccumUs / 1000.0f / perfFrames) : 0.0f;
+        float fps = (perfFrames * 1000.0f) / (millis() - perfLastReportMs);
+        Serial.printf("[PERF] loop=%.2fms render=%.2fms fps=%.1f\n", loopMs, renderMs, fps);
+        perfLoopAccumUs = perfRenderAccumUs = perfLoopCount = perfFrames = 0;
+        perfLastReportMs = millis();
+    }
 }
 
 void updatePhotoperiod() {
@@ -642,7 +668,7 @@ void updatePhotoperiod() {
     if (photoSecondsElapsed >= totalSecs) {
         photoSecondsElapsed = 0;
         if (isVegetative) daysVeg++; else daysFlower++;
-        saveState();
+        markStateDirty();
     }
 
     if (photoSecondsElapsed < lightSecs) {
@@ -817,7 +843,7 @@ void drawUI() {
 
     tft.setTextSize(3); tft.setTextColor(MI_BLANCO, MI_NEGRO);
     struct tm ti; tft.setCursor(55, 15);
-    if (getLocalTime(&ti)) {
+    if (getCachedLocalTime(&ti)) {
         char b[12];
         strftime(b, 12, "%I:%M %p", &ti);
         tft.print(b);
@@ -851,6 +877,39 @@ void drawUI() {
     tft.setTextColor(MI_NARANJA, MI_NEGRO);
     tft.printf("%3d%%  ", (int)perc);
 
+}
+
+void updateClock() {
+    static char lastBuf[12] = "";
+    char b[12];
+    struct tm ti;
+    if (getCachedLocalTime(&ti)) strftime(b, 12, "%I:%M %p", &ti);
+    else snprintf(b, sizeof(b), "--:-- --");
+    if (!dirtyClock && strcmp(lastBuf, b) == 0) return;
+    tft.setTextSize(3); tft.setTextColor(MI_BLANCO, MI_NEGRO); tft.setCursor(55, 15); tft.print("         "); tft.setCursor(55, 15); tft.print(b);
+    strncpy(lastBuf, b, sizeof(lastBuf));
+    dirtyClock = false;
+}
+
+void updateProgressBar() { dirtyProgress = false; drawUI(); }
+void updateSensorWidgets() { drawVPD(); drawTDS(); drawCO2(); drawSoilBars(); dirtySensors = false; }
+void updateCounters() { dirtyCounters = false; drawUI(); }
+
+void renderUIIncremental() {
+    unsigned long rs = micros();
+    if (uiNeedsFullRedraw || !uiStaticDrawn) {
+        tft.fillScreen(MI_NEGRO);
+        drawUI();
+        uiStaticDrawn = true;
+        uiNeedsFullRedraw = false;
+    }
+    if (dirtyClock) updateClock();
+    if (dirtyCounters) updateCounters();
+    if (dirtyProgress) updateProgressBar();
+    if (dirtySensors) updateSensorWidgets();
+    drawWeedagotchi();
+    perfRenderAccumUs += micros() - rs;
+    perfFrames++;
 }
 
 void drawGraph() {
@@ -900,6 +959,6 @@ void handleAction(int tx, int ty, int step) {
     digitalWrite(RELAY_PIN, (photoSecondsElapsed < lightSecs) ? LOW : HIGH);
     inLightMode = (photoSecondsElapsed < lightSecs);
 
-    saveState();
-    drawUI();
+    markStateDirty();
+    markUiDirty();
 }
