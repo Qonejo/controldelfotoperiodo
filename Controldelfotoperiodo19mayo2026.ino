@@ -763,20 +763,23 @@ void drawGameboyFrame(
     int frame[19][21]
 ) {
 
-    uint16_t dark = 0x0320;
+    uint16_t dark  = 0x0320;
     uint16_t light = 0x07E0;
 
-    for (int yy = 0; yy < 19; yy++) {
+    for(int yy = 0; yy < 19; yy++) {
 
-        for (int xx = 0; xx < 21; xx++) {
+        for(int xx = 0; xx < 21; xx++) {
 
             if(frame[yy][xx] != 1)
                 continue;
 
-            // borde oscuro
-            tft.fillRect(
-                x + xx * p,
-                y + yy * p,
+            int px = x + xx * p;
+            int py = y + yy * p;
+
+            // borde oscuro fino
+            tft.drawRect(
+                px,
+                py,
                 p,
                 p,
                 dark
@@ -784,10 +787,10 @@ void drawGameboyFrame(
 
             // relleno verde
             tft.fillRect(
-                x + xx * p + 1,
-                y + yy * p + 1,
-                p - 1,
-                p - 1,
+                px + 1,
+                py + 1,
+                p - 2,
+                p - 2,
                 light
             );
         }
