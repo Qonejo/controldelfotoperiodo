@@ -115,38 +115,43 @@ unsigned long lastTdsDraw = 0;
 unsigned long lastSoilDraw = 0;
 unsigned long lastCO2Draw = 0;
 
-// Dirty flags + cache
-bool uiDirtyClock = true;
-bool uiDirtyProgress = true;
-bool uiDirtySensors = true;
-bool uiDirtySettings = true;
-bool graphDirty = true;
-bool stateDirty = false;
-bool historyDirty = false;
-
-char lastClock[12] = "";
-char lastPhase[12] = "";
-int lastDaysVeg = -1;
-int lastDaysFlower = -1;
-
-struct tm cachedTime;
-bool cachedTimeValid = false;
-unsigned long lastTimeCacheMs = 0;
-
-unsigned long lastTouchDebounceMs = 0;
-bool lastTouchState = false;
-unsigned long touchHoldStartMs = 0;
-unsigned long lastTouchRepeatMs = 0;
-
-unsigned long lastPerfMs = 0;
-uint32_t frameTime = 0;
-
-unsigned long lastStateSaveMs = 0;
-unsigned long lastHistorySaveMs = 0;
-
 // Variables Salvapantallas
 bool screensaverActive = false;
+bool uiNeedsFullRedraw = true;
+bool weedNeedsRedraw = true;
 unsigned long lastTouchTime = 0;
+
+
+// ===== TIEMPO / WATCHDOG =====
+// getLocalTime() usa 5000 ms por defecto. Sin WiFi/NTP activo puede
+// bloquear el loop lo suficiente para disparar el TG1 watchdog.
+static bool getLocalTimeNoBlock(struct tm *ti) {
+    return getLocalTime(ti, 0);
+}
+
+static bool printStaMac() {
+    uint8_t staMac[6] = {0};
+    esp_err_t err = esp_wifi_get_mac(WIFI_IF_STA, staMac);
+
+    if (err != ESP_OK ||
+        (staMac[0] == 0 && staMac[1] == 0 && staMac[2] == 0 &&
+         staMac[3] == 0 && staMac[4] == 0 && staMac[5] == 0)) {
+        Serial.println("MAC EMISOR: INVALIDA");
+        return false;
+    }
+
+    Serial.printf(
+        "MAC EMISOR: %02X:%02X:%02X:%02X:%02X:%02X\n",
+        staMac[0],
+        staMac[1],
+        staMac[2],
+        staMac[3],
+        staMac[4],
+        staMac[5]
+    );
+
+    return true;
+}
 
 // Credenciales WiFi
 const char* ssid = "IZZI-367E";
@@ -192,7 +197,6 @@ void OnDataRecv(
     //=====================================================
     // DATOS DEL SENSOR S1 S2 CO2
     //=====================================================
-    
     if (len == sizeof(soil_message)) {
 
         soil_message incomingSoil;
@@ -204,92 +208,50 @@ void OnDataRecv(
         );
 
         remoteSoil1 = constrain(
-          incomingSoil.soil1,
-          0.0f,
-          100.0f
+            incomingSoil.soil1,
+            0.0f,
+            100.0f
         );
 
         remoteSoil2 = constrain(
-          incomingSoil.soil2,
-          0.0f,
-          100.0f
+            incomingSoil.soil2,
+            0.0f,
+            100.0f
         );
 
         remoteCO2 = max(
-          incomingSoil.co2,
-          0.0f
+            incomingSoil.co2,
+            0.0f
         );
 
-        // FORZAR REDIBUJO
-        lastDisplayedSoil1 = -999;
-        uiDirtySensors = true;
-        lastDisplayedSoil2 = -999;
-        lastDisplayedCO2 = -999;
-
         lastEspNowReceiveMs = millis();
-
-        Serial.println("[ESP RX SOIL]");
-        Serial.printf("S1 %.1f\n", remoteSoil1);
-        Serial.printf("S2 %.1f\n", remoteSoil2);
-        Serial.printf("CO2 %.0f\n", remoteCO2);
 
         return;
     }
 
-
     if (len == sizeof(greenhouse_message)) {
-
-        greenhouse_message incoming;
-
-        memcpy(
-            &incoming,
-            incomingData,
-            sizeof(incoming)
-        );
-
-        remoteVPD = incoming.vpd;
-        remoteTDS = incoming.tds;
-
-        remoteSoil1 = constrain(
-            incoming.soil1,
-            0.0f,
-            100.0f
-        );
-
-        remoteSoil2 = constrain(
-            incoming.soil2,
-            0.0f,
-            100.0f
-        );
-
-        remoteCO2 =
-            max(
-               incoming.co2,
-               0.0f
-            );
-
-        remoteTemp = incoming.airTemp;
-        remoteHum = incoming.airHum;
-
-        remoteRelay =
-            incoming.relayState;
-
-        // FORZAR REFRESH
-        lastDisplayedVPD = -999;
-        uiDirtySensors = true;
-        lastDisplayedTDS = -999;
-        lastDisplayedSoil1 = -999;
-        uiDirtySensors = true;
-        lastDisplayedSoil2 = -999;
-        lastDisplayedCO2 = -999;
-
-        lastEspNowReceiveMs =
-            millis();
-
-        Serial.println(
-            "[ESP RX GREENHOUSE]"
-        );
-
+        memcpy(&greenhouseData, incomingData, sizeof(greenhouseData));
+        remoteVPD = greenhouseData.vpd;
+        remoteTDS = greenhouseData.tds;
+        remotePH = greenhouseData.ph;
+        remoteSoil1 = greenhouseData.soil1;
+        remoteSoil2 = greenhouseData.soil2;
+        remoteCO2 = greenhouseData.co2;
+        remoteTemp = greenhouseData.airTemp;
+        remoteHum = greenhouseData.airHum;
+        remoteRelay = greenhouseData.relayState;
+        lastEspNowReceiveMs = millis();
+        Serial.println("[ESP-NOW RX greenhouse_message OK]");
+        Serial.print("VPD: ");
+        Serial.println(remoteVPD);
+        Serial.print("TDS: ");
+        Serial.println(remoteTDS);
+        Serial.print("CO2: ");
+        Serial.println(remoteCO2);
+        Serial.print("TEMP: ");
+        Serial.println(remoteTemp);
+        Serial.print("HUM: ");
+        Serial.println(remoteHum);
         return;
     }
 
@@ -323,16 +285,16 @@ void loadHistory() {
     }
     File file = SD.open("/history.txt");
     if (!file) return;
-    char data[320] = {0};
-    size_t n = file.readBytes(data, sizeof(data) - 1);
-    data[n] = '\0';
+    String data = file.readString();
     file.close();
 
-    char *token = strtok(data, ",");
-    int i = 0;
-    while (token && i < 24) {
-        history[i++] = atof(token);
-        token = strtok(NULL, ",");
+    int from = 0;
+    for (int i = 0; i < 24; i++) {
+        int comma = data.indexOf(',', from);
+        String token = (comma >= 0) ? data.substring(from, comma) : data.substring(from);
+        history[i] = token.toFloat();
+        if (comma < 0) break;
+        from = comma + 1;
     }
     Serial.println("[SD] Historial cargado");
 }
@@ -350,17 +312,15 @@ void saveState() {
 
 void loadState() {
     if (!SD.exists("/estado.txt")) {
-        stateDirty = true; historyDirty = true;
+        saveState();
         return;
     }
     File file = SD.open("/estado.txt");
     if (file) {
-        char data[192] = {0};
-        size_t n = file.readBytes(data, sizeof(data) - 1);
-        data[n] = '\0';
+        String data = file.readString();
         int v2, lightMode = 1;
         float savedVPD = 0.0f;
-        int parsed = sscanf(data, "%d,%d,%d,%d,%d,%lf,%f,%d", &lightHours, &darkHours, &v2, &daysVeg, &daysFlower, &photoSecondsElapsed, &savedVPD, &lightMode);
+        int parsed = sscanf(data.c_str(), "%d,%d,%d,%d,%d,%lf,%f,%d", &lightHours, &darkHours, &v2, &daysVeg, &daysFlower, &photoSecondsElapsed, &savedVPD, &lightMode);
         if (parsed >= 6) {
             isVegetative = (v2 == 1);
             if (parsed >= 7) remoteVPD = savedVPD;
@@ -381,10 +341,10 @@ void handleAutoSave() {
     bool configChanged = (lightHours != prevLightHours) || (darkHours != prevDarkHours) || (isVegetative != prevVegetative);
     bool phaseChanged = (inLightMode != prevLightMode);
     bool historyChanged = fabs(history[23] - prevHistoryLast) > 0.001f;
-    bool timeElapsed = millis() - lastAutoSave > 120000;
+    bool timeElapsed = millis() - lastAutoSave > 60000;
 
     if (configChanged || phaseChanged || historyChanged || timeElapsed) {
-        stateDirty = true; historyDirty = true;
+        saveState();
         lastAutoSave = millis();
         prevLightHours = lightHours;
         prevDarkHours = darkHours;
@@ -392,12 +352,7 @@ void handleAutoSave() {
         prevLightMode = inLightMode;
         prevHistoryLast = history[23];
     }
-    if (historyChanged && millis() - lastHistorySaveMs > 300000) {
-        saveHistory();
-        lastHistorySaveMs = millis();
-    }
 }
-
 
 void setup() {
     Serial.begin(115200);
@@ -405,8 +360,9 @@ void setup() {
     // ================= WIFI STA ==========================
     // =====================================================
     WiFi.mode(WIFI_STA);
-    Serial.print("MAC EMISOR: ");
-    Serial.println(WiFi.macAddress());
+    WiFi.disconnect(false, false);
+    delay(100);
+    printStaMac();
 
     // WiFi.begin(ssid, password);
     // while (WiFi.status() != WL_CONNECTED) {
@@ -494,7 +450,7 @@ void drawScreensaver() {
     if (millis() - lastMove > 30000 || screensaverActive == false) {
         tft.fillScreen(MI_NEGRO);
         struct tm ti;
-        if (getLocalTime(&ti)) {
+        if (getLocalTimeNoBlock(&ti)) {
             char b[12];
             strftime(b, 12, "%I:%M %p", &ti);
             tft.setTextSize(2);
@@ -539,276 +495,187 @@ void drawTDS() {
     }
 }
 
-
 void drawCO2() {
-
     if (
-        fabs(remoteCO2 - lastDisplayedCO2) < 1.0f
-        &&
-        millis() - lastCO2Draw < 100
-    ) return;
+        fabs(remoteCO2 - lastDisplayedCO2) > 0.2f ||
+        millis() - lastCO2Draw > 500
+    ) {
+        tft.setTextSize(1);
+        uint16_t co2Color = (remoteCO2 > 1900.0f) ? ST77XX_RED : ST77XX_WHITE;
+        tft.setTextColor(co2Color, MI_NEGRO);
+        tft.fillRect(
+            268,
+            40,
+            52,
+            10,
+            MI_NEGRO
+        );
+        tft.setCursor(270, 40);
+        tft.printf("CO2 %.0f", remoteCO2);
 
-    tft.fillRect(
-        266,
-        38,
-        54,
-        12,
-        MI_NEGRO
-    );
-
-    tft.setTextSize(1);
-
-    uint16_t co2Color =
-        (
-            remoteCO2 > 1900
-        )
-        ?
-        ST77XX_RED
-        :
-        ST77XX_WHITE;
-
-    tft.setTextColor(
-        co2Color,
-        MI_NEGRO
-    );
-
-    tft.setCursor(
-        270,
-        40
-    );
-
-    tft.printf(
-        "CO2 %.0f",
-        remoteCO2
-    );
-
-    lastDisplayedCO2 =
-        remoteCO2;
-
-    lastCO2Draw =
-        millis();
-   
+        lastDisplayedCO2 = remoteCO2;
+        lastCO2Draw = millis();
+    }
 }
 
-
 void drawSoilBars() {
-
     if (
-        fabs(
-            remoteSoil1
-            -
-            lastDisplayedSoil1
-        ) < 0.1f
-        &&
-        fabs(
-            remoteSoil2
-            -
-            lastDisplayedSoil2
-        ) < 0.1f
-        &&
-        millis() - lastSoilDraw < 120
-    ) return;
+        fabs(remoteSoil1 - lastDisplayedSoil1) > 0.2f ||
+        fabs(remoteSoil2 - lastDisplayedSoil2) > 0.2f ||
+        millis() - lastSoilDraw > 500
+    ) {
+        const int barW = 10;
+        const int barH = 45;
+        const int barY = 55;
+        const int bar1X = 275;
+        const int bar2X = 292;
+        const int labelY = barY + barH + 4;
 
-    const int barW = 10;
-    const int barH = 45;
-
-    const int barY = 55;
-
-    const int bar1X = 275;
-    const int bar2X = 292;
-
-    auto drawBar =
-    [&](int x,float value,uint16_t c)
-    {
-
-        value =
-        constrain(
-            value,
-            0,
-            100
-        );
-
-        int fill =
-        (
-            barH
-            *
-            value
-        )
-        /
-        100;
+        float soil1 = constrain(remoteSoil1, 0.0f, 100.0f);
+        float soil2 = constrain(remoteSoil2, 0.0f, 100.0f);
+        int fill1 = (int)((soil1 / 100.0f) * (barH - 2));
+        int fill2 = (int)((soil2 / 100.0f) * (barH - 2));
 
         tft.fillRect(
-            x,
-            barY,
-            barW,
-            barH,
+            274,
+            55,
+            28,
+            55,
             MI_NEGRO
         );
 
-        tft.drawRect(
-            x,
-            barY,
-            barW,
-            barH,
-            0x8410
-        );
+        tft.drawRect(bar1X, barY, barW, barH, 0x8410);
+        tft.drawRect(bar2X, barY, barW, barH, 0x8410);
 
-        if(fill>0)
-        {
-            tft.fillRect(
-                x+1,
-                barY+
-                (
-                    barH
-                    -
-                    fill
-                ),
-                barW-2,
-                fill-1,
-                c
-            );
-        }
-    };
+        if (fill1 > 0) tft.fillRect(bar1X + 1, barY + (barH - 1 - fill1), barW - 2, fill1, ST77XX_CYAN);
+        if (fill2 > 0) tft.fillRect(bar2X + 1, barY + (barH - 1 - fill2), barW - 2, fill2, ST77XX_BLUE);
 
-    drawBar(
-        bar1X,
-        remoteSoil1,
-        ST77XX_CYAN
-    );
+        tft.setTextSize(1);
+        tft.setTextColor(MI_BLANCO, MI_NEGRO);
+        tft.setCursor(bar1X - 1, labelY);
+        tft.print("S1");
+        tft.setCursor(bar2X - 1, labelY);
+        tft.print("S2");
 
-    drawBar(
-        bar2X,
-        remoteSoil2,
-        ST77XX_BLUE
-    );
 
-    tft.setTextSize(1);
-
-    tft.setTextColor(
-        MI_BLANCO,
-        MI_NEGRO
-    );
-
-    tft.setCursor(
-        274,
-        104
-    );
-
-    tft.print("S1");
-
-    tft.setCursor(
-        291,
-        104
-    );
-
-    tft.print("S2");
-
-    lastDisplayedSoil1 =
-        remoteSoil1;
-
-    lastDisplayedSoil2 =
-        remoteSoil2;
-
-    lastSoilDraw =
-        millis();
-    
-}
-
-void updateCachedTime() {
-    unsigned long now = millis();
-    if (now - lastTimeCacheMs >= 1000 || !cachedTimeValid) {
-        cachedTimeValid = getLocalTime(&cachedTime);
-        lastTimeCacheMs = now;
-        uiDirtyClock = true;
-        uiDirtyProgress = true;
-    }
-}
-
-void handleTouchInput() {
-    unsigned long now = millis();
-    bool touched = ts.touched();
-    if (touched != lastTouchState && now - lastTouchDebounceMs > 25) {
-        lastTouchDebounceMs = now;
-        lastTouchState = touched;
-        if (touched) {
-            TS_Point p = ts.getPoint();
-            int tx = map(p.y, 200, 3800, 320, 0);
-            int ty = map(p.x, 200, 3800, 0, 240);
-            touchHoldStartMs = now;
-            lastTouchRepeatMs = now;
-            handleAction(tx, ty, 1);
-            lastTouchTime = now;
-        } else {
-            touchHoldStartMs = 0;
-        }
-    }
-
-    if (touched && touchHoldStartMs > 0) {
-        TS_Point p = ts.getPoint();
-        int tx = map(p.y, 200, 3800, 320, 0);
-        int ty = map(p.x, 200, 3800, 0, 240);
-        unsigned long held = now - touchHoldStartMs;
-        unsigned long rep = (held > 1000) ? 90 : (held > 450 ? 140 : 220);
-        int step = (held > 1200) ? 3 : 1;
-        if (now - lastTouchRepeatMs >= rep) {
-            handleAction(tx, ty, step);
-            lastTouchRepeatMs = now;
-        }
+        lastDisplayedSoil1 = remoteSoil1;
+        lastDisplayedSoil2 = remoteSoil2;
+        lastSoilDraw = millis();
     }
 }
 
 void loop() {
-    uint32_t loopStart = micros();
-    updateCachedTime();
-    updatePhotoperiod();
-    handleTouchInput();
+    static uint32_t lastHeartbeat = 0;
 
+    if (millis() - lastHeartbeat > 1000) {
+        Serial.println("UI ALIVE");
+        lastHeartbeat = millis();
+    }
+  
+    updatePhotoperiod(); 
+
+    // --- RECONEXIÓN WIFI SILENCIOSA (Cada 30 seg) ---
     if (millis() - lastWifiCheck > 30000) {
-        if (WiFi.status() != WL_CONNECTED) WiFi.reconnect();
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("WiFi reconnecting...");
+            WiFi.reconnect();
+        }
         lastWifiCheck = millis();
     }
 
-    bool isNight = cachedTimeValid && cachedTime.tm_hour >= 0 && cachedTime.tm_hour < 8;
+    struct tm ti;
+    bool isNight = false;
+    if (getLocalTimeNoBlock(&ti)) {
+        if (ti.tm_hour >= 0 && ti.tm_hour < 8) isNight = true;
+    }
 
-    if (isNight && (millis() - lastTouchTime > 30000)) {
-        drawScreensaver();
-    } else {
+    if (ts.touched()) {
+        lastTouchTime = millis();
         if (screensaverActive) {
             screensaverActive = false;
+            uiNeedsFullRedraw = true;
+            weedNeedsRedraw = true;
             tft.fillScreen(MI_NEGRO);
-            uiDirtyClock = uiDirtyProgress = uiDirtySensors = uiDirtySettings = true;
-            graphDirty = true;
+            drawUI();
         }
-        if (showGraph) drawGraph();
-        else drawUI();
+
+        TS_Point p = ts.getPoint();
+        int tx = map(p.y, 200, 3800, 320, 0); 
+        int ty = map(p.x, 200, 3800, 0, 240);
+        
+        if (touchStartTime == 0) {
+            touchStartTime = millis();
+            handleAction(tx, ty, 1); 
+        } else if (millis() - touchStartTime > 1000) {
+            handleAction(tx, ty, 3); 
+            delay(100); 
+        } else if (millis() - touchStartTime > 400) {
+            handleAction(tx, ty, 1); 
+            delay(120);
+        }
+    } else {
+        touchStartTime = 0;
     }
 
-    drawVPD(); drawTDS(); drawCO2(); drawSoilBars(); drawWeedagotchi();
-
-    growData.lightHours = lightHours; growData.darkHours = darkHours;
-    growData.daysVeg = daysVeg; growData.daysFlower = daysFlower;
-    growData.isVegetative = isVegetative; growData.inLightMode = inLightMode;
-    growData.progressPercent = (photoSecondsElapsed / ((lightHours + darkHours) * 3600.0)) * 100.0;
-    growData.vpd = remoteVPD;
-    if (cachedTimeValid) { growData.hour = cachedTime.tm_hour; growData.minute = cachedTime.tm_min; growData.second = cachedTime.tm_sec; }
-
-    static struct_message lastSent = {};
-    bool changed = memcmp(&lastSent, &growData, sizeof(growData)) != 0;
-    if (changed || millis() - lastEspNowSend > 10000) {
-        esp_now_send(macInvernadero, (uint8_t*)&growData, sizeof(growData));
-        esp_now_send(macCalendarioESP, (uint8_t*)&growData, sizeof(growData));
-        memcpy(&lastSent, &growData, sizeof(growData));
-        lastEspNowSend = millis();
+    if (!showGraph && !screensaverActive) {
+        drawVPD();
+        drawTDS();
+        drawCO2();
+        drawSoilBars();
+        drawWeedagotchi();
     }
 
-    handleAutoSave();
+    if (millis() - lastUIRefresh > 1000) {
+        if (isNight && (millis() - lastTouchTime > 30000)) {
+            drawScreensaver();
+        } else {
+            screensaverActive = false; 
+            if (!showGraph) {
+                drawUI();
+            } else {
+                drawGraph();
+            }
+        }
+        
+        lastUIRefresh = millis();
+        // =====================================================
+        // ================= ESP NOW SEND ======================
+        // =====================================================
+        struct tm ti2;
+        if (getLocalTimeNoBlock(&ti2)) {
+            growData.hour = ti2.tm_hour;
+            growData.minute = ti2.tm_min;
+            growData.second = ti2.tm_sec;
+        }
+        growData.lightHours = lightHours;
+        growData.darkHours = darkHours;
+        growData.daysVeg = daysVeg;
+        growData.daysFlower = daysFlower;
+        growData.isVegetative = isVegetative;
+        growData.inLightMode = inLightMode;
+        growData.progressPercent =
+            (photoSecondsElapsed /
+            ((lightHours + darkHours) * 3600.0))
+            * 100.0;
+        growData.vpd = remoteVPD;
 
-    frameTime = micros() - loopStart;
-    if (millis() - lastPerfMs >= 1000) {
-        float loopMs = frameTime / 1000.0f;
-        float fps = (frameTime > 0) ? 1000000.0f / frameTime : 0.0f;
-        Serial.printf("[PERF] Loop %.2f ms | FPS %.1f\n", loopMs, fps);
-        lastPerfMs = millis();
+        if (millis() - lastEspNowSend > 3000) {
+            esp_now_send(
+                macInvernadero,
+                (uint8_t *) &growData,
+                sizeof(growData)
+            );
+            esp_now_send(
+                macCalendarioESP,
+                (uint8_t *) &growData,
+                sizeof(growData)
+            );
+            Serial.println("[ESP-NOW] CALENDARIO ENVIADO");
+
+            lastEspNowSend = millis();
+        }
+
+        handleAutoSave();
     }
 }
 
@@ -823,7 +690,7 @@ void updatePhotoperiod() {
     if (photoSecondsElapsed >= totalSecs) {
         photoSecondsElapsed = 0;
         if (isVegetative) daysVeg++; else daysFlower++;
-        stateDirty = true; historyDirty = true;
+        saveState();
     }
 
     if (photoSecondsElapsed < lightSecs) {
@@ -838,12 +705,10 @@ void updatePhotoperiod() {
         for (int i = 0; i < 23; i++) history[i] = history[i+1];
         history[23] = (photoSecondsElapsed / totalSecs) * 100.0;
         lastHistoryUpdate = now;
-        historyDirty = true;
-        graphDirty = true;
     }
 }
 
-void printStyled(int x, int y, const char* label, const char* value, uint16_t valCol, int size, bool arrows = true) {
+void printStyled(int x, int y, String label, String value, uint16_t valCol, int size, bool arrows = true) {
     tft.setTextSize(size); tft.setCursor(x, y);
     if (arrows) { tft.setTextColor(ST77XX_RED, MI_NEGRO); tft.print("< "); }
     tft.setTextColor(MI_BLANCO, MI_NEGRO); tft.print(label);
@@ -939,106 +804,52 @@ int deadFace[19][21] = {
     {0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0}
 };
 
-void drawGameboyFrame(
-    int x,
-    int y,
-    int p,
-    int frame[19][21]
-) {
+void drawGameboyFrame(int x, int y, int p, int frame[19][21]) {
+    if (p <= 0 || x < p || y < p) return;
 
-    uint16_t dark  = 0x0320;
+    const int spriteRight = x + (22 * p);
+    const int spriteBottom = y + (20 * p);
+    if (spriteRight > (int)tft.width() || spriteBottom > (int)tft.height()) return;
+
+    uint16_t dark = 0x0320;
     uint16_t light = 0x07E0;
 
-    // =========================
-    // OUTLINE EXTERIOR
-    // =========================
+    auto px = [&](int xx, int yy, uint16_t c) {
+        tft.fillRect(x + xx * p, y + yy * p, p, p, c);
+    };
 
     for (int yy = 0; yy < 19; yy++) {
-
         for (int xx = 0; xx < 21; xx++) {
-
-            if (!frame[yy][xx])
-                continue;
-
-            int px = x + xx * p;
-            int py = y + yy * p;
-
-            bool up =
-                yy > 0 &&
-                frame[yy - 1][xx];
-
-            bool down =
-                yy < 18 &&
-                frame[yy + 1][xx];
-
-            bool left =
-                xx > 0 &&
-                frame[yy][xx - 1];
-
-            bool right =
-                xx < 20 &&
-                frame[yy][xx + 1];
-
-            if (!up)
-                tft.fillRect(px, py, p, 1, dark);
-
-            if (!down)
-                tft.fillRect(px, py + p - 1, p, 1, dark);
-
-            if (!left)
-                tft.fillRect(px, py, 1, p, dark);
-
-            if (!right)
-                tft.fillRect(px + p - 1, py, 1, p, dark);
+            if (frame[yy][xx]) {
+                px(xx - 1, yy, dark);
+                px(xx + 1, yy, dark);
+                px(xx, yy - 1, dark);
+                px(xx, yy + 1, dark);
+            }
         }
     }
 
-    // =========================
-    // RELLENO
-    // =========================
-
     for (int yy = 0; yy < 19; yy++) {
-
         for (int xx = 0; xx < 21; xx++) {
-
-            if (!frame[yy][xx])
-                continue;
-
-            int px = x + xx * p;
-            int py = y + yy * p;
-
-            tft.fillRect(
-                px + 1,
-                py + 1,
-                p - 2,
-                p - 2,
-                light
-            );
+            if (frame[yy][xx]) {
+                px(xx, yy, light);
+            }
         }
     }
 }
 
 void drawWeedagotchi() {
-    static int frame = 0;
     static int lastSway = 999;
     static int lastMoodBucket = -1;
-    static unsigned long lastAnimMs = 0;
-    if (millis() - lastAnimMs < 220) return;
-    lastAnimMs = millis();
-    frame = (frame + 1) % 4;
-    int sway = (frame < 2) ? 0 : 1;
+
+    int sway = (int)(sin(millis() * 0.0007f) * 1.0f);
     float mood = (remoteSoil1 + remoteSoil2) * 0.5f;
     int moodBucket = (mood >= 60.0f) ? 0 : (mood >= 40.0f) ? 1 : (mood >= 10.0f) ? 2 : 3;
 
-    if (sway == lastSway && moodBucket == lastMoodBucket) return;
+    if (!weedNeedsRedraw && sway == lastSway && moodBucket == lastMoodBucket) return;
 
-    tft.fillRect(
-        236,
-        116,
-        66,
-        60,
-        MI_NEGRO
-    );
+    // Huella completa del sprite, incluido el borde de un pixel y ambos extremos del sway.
+    tft.fillRect(234, 115, 71, 63, MI_NEGRO);
 
     if (moodBucket == 0) {
         drawGameboyFrame(238 + sway, 118, 3, happyFace);
@@ -1052,68 +863,128 @@ void drawWeedagotchi() {
 
     lastSway = sway;
     lastMoodBucket = moodBucket;
+    weedNeedsRedraw = false;
 }
 
 void drawUI() {
-    if (uiDirtySettings) {
+    static int lastWifiStatus = -1;
+    static int lastLightHours = -1;
+    static int lastDarkHours = -1;
+    static int lastDaysVeg = -1;
+    static int lastDaysFlower = -1;
+    static int lastVegetative = -1;
+    static int lastLightMode = -1;
+
+    int wifiStatus = WiFi.status();
+    if (uiNeedsFullRedraw || wifiStatus != lastWifiStatus) {
+        uint16_t wifiCol = (wifiStatus == WL_CONNECTED) ? ST77XX_CYAN : ST77XX_RED;
+        tft.fillCircle(5, 5, 3, wifiCol);
+        lastWifiStatus = wifiStatus;
+    }
+
+    tft.setTextSize(3);
+    tft.setTextColor(MI_BLANCO, MI_NEGRO);
+    struct tm ti;
+    tft.setCursor(55, 15);
+    if (getLocalTimeNoBlock(&ti)) {
+        char b[12];
+        strftime(b, sizeof(b), "%I:%M %p", &ti);
+        tft.print(b);
+    } else {
+        tft.print("--:-- --");
+    }
+
+    if (uiNeedsFullRedraw || lightHours != lastLightHours || darkHours != lastDarkHours) {
         tft.setTextSize(1);
-        char buf[32];
-        tft.fillRect(130, 45, 120, 12, MI_NEGRO);
-        snprintf(buf, sizeof(buf), "Ciclo %dh", (lightHours + darkHours));
-        tft.setCursor(135, 45); tft.setTextColor(ST77XX_YELLOW, MI_NEGRO); tft.print(buf);
-        char l[12], d[12], vg[12], fl[12], mode[16];
-        snprintf(l, sizeof(l), "%dh  ", lightHours); snprintf(d, sizeof(d), "%dh  ", darkHours);
-        snprintf(vg, sizeof(vg), "%d  ", daysVeg); snprintf(fl, sizeof(fl), "%d  ", daysFlower);
-        snprintf(mode, sizeof(mode), "%s", isVegetative ? "VEGETACION" : "FLORACION  ");
-        printStyled(10, 70, "LUZ: ", l, ST77XX_YELLOW, 1);
-        printStyled(170, 70, "OSC: ", d, MI_BLANCO, 1);
-        printStyled(10, 100, "MODO: ", mode, isVegetative ? ST77XX_GREEN : MI_MORADO, 2);
-        printStyled(10, 130, "DIAS VEG:  ", vg, ST77XX_GREEN, 2);
-        printStyled(10, 160, "DIAS FLOR: ", fl, MI_MORADO, 2);
-        uiDirtySettings = false;
+        tft.setTextColor(ST77XX_YELLOW, MI_NEGRO);
+        tft.setCursor(135, 45);
+        tft.printf("Ciclo %dh    ", (lightHours + darkHours));
+        printStyled(10, 70, "LUZ: ", String(lightHours) + "h  ", ST77XX_YELLOW, 1);
+        printStyled(170, 70, "OSC: ", String(darkHours) + "h  ", MI_BLANCO, 1);
+        lastLightHours = lightHours;
+        lastDarkHours = darkHours;
     }
-    if (uiDirtyClock) {
-        tft.fillRect(55, 15, 150, 26, MI_NEGRO);
-        tft.setTextSize(3); tft.setCursor(55, 15); tft.setTextColor(MI_BLANCO, MI_NEGRO);
-        if (cachedTimeValid) { char b[12]; strftime(b, 12, "%I:%M %p", &cachedTime); if (strcmp(lastClock,b)!=0){ strcpy(lastClock,b); tft.print(b);} }
-        else tft.print("--:-- --");
-        uiDirtyClock = false;
+
+    uint16_t mCol = isVegetative ? ST77XX_GREEN : MI_MORADO;
+    if (uiNeedsFullRedraw || (int)isVegetative != lastVegetative) {
+        printStyled(10, 100, "MODO: ", (isVegetative ? "VEGETACION" : "FLORACION  "), mCol, 2);
+        lastVegetative = isVegetative;
     }
-    if (uiDirtyProgress) {
-        int bx=30,bw=260,by=190; double phaseDur=inLightMode?(lightHours*3600.0):(darkHours*3600.0);
-        double phaseElap=inLightMode?photoSecondsElapsed:(photoSecondsElapsed-(lightHours*3600.0));
-        float perc=(phaseElap/phaseDur)*100.0f; int fill=(int)((bw-4)*(perc/100.0f)); uint16_t mCol=isVegetative?ST77XX_GREEN:MI_MORADO;
-        tft.drawRect(bx, by, bw, 15, MI_BLANCO); tft.fillRect(bx+2, by+2, fill, 11, mCol); tft.fillRect(bx+2+fill, by+2, (bw-4)-fill, 11, MI_NEGRO);
-        tft.fillRect(10,220,220,14,MI_NEGRO);
-        printStyled(10,220,"FASE: ",inLightMode?"LUZ      ":"OSCURIDAD",MI_BLANCO,1,true);
-        tft.setCursor(170,220); tft.setTextColor(MI_BLANCO, MI_NEGRO); int h=(int)(phaseElap/3600),m=(int)((long)phaseElap%3600/60),sec=(int)((long)phaseElap%60);
-        tft.printf("%02d:%02d:%02d ",h,m,sec); tft.setTextColor(MI_NARANJA, MI_NEGRO); tft.printf("%3d%%  ",(int)perc);
-        uiDirtyProgress=false;
+    if (uiNeedsFullRedraw || daysVeg != lastDaysVeg) {
+        printStyled(10, 130, "DIAS VEG:  ", String(daysVeg) + "  ", ST77XX_GREEN, 2);
+        lastDaysVeg = daysVeg;
     }
+    if (uiNeedsFullRedraw || daysFlower != lastDaysFlower) {
+        printStyled(10, 160, "DIAS FLOR: ", String(daysFlower) + "  ", MI_MORADO, 2);
+        lastDaysFlower = daysFlower;
+    }
+
+    const int bx = 30;
+    const int bw = 260;
+    const int by = 190;
+    double phaseDur = inLightMode ? (lightHours * 3600.0) : (darkHours * 3600.0);
+    double phaseElap = inLightMode ? photoSecondsElapsed : (photoSecondsElapsed - (lightHours * 3600.0));
+    if (phaseDur <= 0.0) phaseDur = 1.0;
+    if (phaseElap < 0.0) phaseElap = 0.0;
+    if (phaseElap > phaseDur) phaseElap = phaseDur;
+    float perc = constrain((float)((phaseElap / phaseDur) * 100.0), 0.0f, 100.0f);
+    int progressWidth = constrain((int)((bw - 4) * (perc / 100.0f)), 0, bw - 4);
+
+    if (uiNeedsFullRedraw) {
+        tft.drawRect(bx, by, bw, 15, MI_BLANCO);
+    }
+    if (progressWidth > 0) {
+        tft.fillRect(bx + 2, by + 2, progressWidth, 11, mCol);
+    }
+    const int remainingWidth = (bw - 4) - progressWidth;
+    if (remainingWidth > 0) {
+        tft.fillRect(bx + 2 + progressWidth, by + 2, remainingWidth, 11, MI_NEGRO);
+    }
+
+    if (uiNeedsFullRedraw || (int)inLightMode != lastLightMode) {
+        tft.setTextSize(1);
+        printStyled(10, 220, "FASE: ", (inLightMode ? "LUZ      " : "OSCURIDAD"), MI_BLANCO, 1, true);
+        lastLightMode = inLightMode;
+    }
+
+    tft.setTextSize(1);
+    tft.setCursor(170, 220);
+    tft.setTextColor(MI_BLANCO, MI_NEGRO);
+    int h = (int)(phaseElap / 3600);
+    int m = (int)((long)phaseElap % 3600 / 60);
+    int s = (int)((long)phaseElap % 60);
+    tft.printf("%02d:%02d:%02d ", h, m, s);
+    tft.setTextColor(MI_NARANJA, MI_NEGRO);
+    tft.printf("%3d%%  ", (int)perc);
+
+    uiNeedsFullRedraw = false;
 }
 
 void drawGraph() {
-    static bool initialized = false;
-    if (!initialized || graphDirty) {
-        tft.fillScreen(MI_NEGRO);
-        tft.setTextColor(MI_BLANCO); tft.setTextSize(2); tft.setCursor(60, 10); tft.print("HISTORIAL 24H (%)");
-        tft.drawLine(30, 40, 30, 200, MI_BLANCO); tft.drawLine(30, 200, 300, 200, MI_BLANCO);
-        initialized = true;
+    tft.fillScreen(MI_NEGRO);
+    tft.setTextColor(MI_BLANCO); tft.setTextSize(2);
+    tft.setCursor(60, 10); tft.print("HISTORIAL 24H (%)");
+    tft.drawLine(30, 40, 30, 200, MI_BLANCO);
+    tft.drawLine(30, 200, 300, 200, MI_BLANCO);
+    for (int i = 0; i < 23; i++) {
+        float value1 = constrain(history[i], 0.0f, 100.0f);
+        float value2 = constrain(history[i + 1], 0.0f, 100.0f);
+        int x1 = 30 + (i * 11), y1 = 200 - (value1 * 1.5f);
+        int x2 = 30 + ((i + 1) * 11), y2 = 200 - (value2 * 1.5f);
+        tft.drawLine(x1, y1, x2, y2, ST77XX_GREEN);
     }
-    static float lastHist[24] = {0};
-    for (int i=0;i<23;i++) {
-        if (graphDirty || fabs(lastHist[i]-history[i])>0.01f || fabs(lastHist[i+1]-history[i+1])>0.01f) {
-            int x1=30+(i*11),x2=30+((i+1)*11); tft.drawLine(x1,40,x2,200,MI_NEGRO);
-            int y1=200-(history[i]*1.5), y2=200-(history[i+1]*1.5); tft.drawLine(x1,y1,x2,y2,ST77XX_GREEN);
-            lastHist[i]=history[i]; lastHist[i+1]=history[i+1];
-        }
-    }
-    tft.setTextSize(1); tft.setTextColor(ST77XX_RED); tft.setCursor(100,220); tft.print("< TOCAR PARA VOLVER >");
-    graphDirty=false;
+    tft.setTextSize(1); tft.setTextColor(ST77XX_RED);
+    tft.setCursor(100, 220); tft.print("< TOCAR PARA VOLVER >");
 }
 
 void handleAction(int tx, int ty, int step) {
-    if (showGraph) { showGraph = false; tft.fillScreen(MI_NEGRO); return; }
+    if (showGraph) {
+        showGraph = false;
+        uiNeedsFullRedraw = true;
+        weedNeedsRedraw = true;
+        tft.fillScreen(MI_NEGRO);
+        return;
+    }
     if (ty >= 180 && ty <= 210) {
         float ratio = constrain((float)(tx - 30) / 260.0, 0.0, 1.0);
         double phDur = inLightMode ? (lightHours*3600.0) : (darkHours*3600.0);
@@ -1144,9 +1015,6 @@ void handleAction(int tx, int ty, int step) {
     digitalWrite(RELAY_PIN, (photoSecondsElapsed < lightSecs) ? LOW : HIGH);
     inLightMode = (photoSecondsElapsed < lightSecs);
 
-    stateDirty = true;
-    uiDirtySettings = true;
-    uiDirtyProgress = true;
-    uiDirtyClock = true;
-    graphDirty = true;
+    saveState();
+    drawUI();
 }
