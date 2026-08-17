@@ -103,6 +103,7 @@ unsigned long lastMillis = 0, lastUIRefresh = 0;
 unsigned long lastHistoryUpdate = 0, lastWifiCheck = 0;
 unsigned long touchStartTime = 0, lastTouchActionMs = 0, lastEspNowSend = 0;
 unsigned long lastAutoSave = 0, lastTouchTime = 0;
+const unsigned long AUTOSAVE_INTERVAL_MS = 300000UL;  // guarda estado en SD cada 5 minutos
 
 // ─────────────────────────────────────────────
 //  DATOS REMOTOS
@@ -543,11 +544,12 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
 
 // ─────────────────────────────────────────────
 //  SD  –  ESCRITURA ATÓMICA
-//  Escribe en /estado.tmp y luego renombra,
+//  Escribe en un temporal propio de cada archivo y luego renombra,
 //  para no perder datos si hay corte de luz.
 // ─────────────────────────────────────────────
 static bool atomicWrite(const char* finalPath, const String& content) {
-    const char* tmpPath = "/estado.tmp";
+    String tmpName = String(finalPath) + ".tmp";
+    const char* tmpPath = tmpName.c_str();
     SD.remove(tmpPath);
     File f = SD.open(tmpPath, FILE_WRITE);
     if (!f) { Serial.println("[SD] ERROR abriendo tmp"); return false; }
@@ -595,7 +597,7 @@ void loadHistory() {
     Serial.println("[SD] historial cargado");
 }
 
-void saveState() {
+void saveState(bool includeHistory = false) {
     // Incluimos cycleStartEpoch para recuperar el anclaje RTC tras reinicio
     String buf = "";
     char tmp[128];
@@ -609,7 +611,7 @@ void saveState() {
              (long)cycleStartEpoch);
     buf = tmp;
     atomicWrite("/estado.txt", buf);
-    saveHistory();
+    if (includeHistory) saveHistory();
     Serial.println("[SD] estado guardado");
 }
 
@@ -640,20 +642,13 @@ void loadState() {
 }
 
 void handleAutoSave() {
-    static int   pLH=-1, pDH=-1, pVeg=-1, pLM=-1;
-    static float pHist=-999;
-    bool changed = (lightHours!=pLH)||(darkHours!=pDH)||
-                   ((int)isVegetative!=pVeg)||((int)inLightMode!=pLM)||
-                   (fabs(history[23]-pHist)>0.001f);
-    bool elapsed = (millis()-lastAutoSave > 600000UL);  // respaldo cada 10 min
-    if (changed || elapsed) {
-        saveState();
-        lastAutoSave = millis();
-        stateDirty   = false;
-        pLH=lightHours; pDH=darkHours;
-        pVeg=(int)isVegetative; pLM=(int)inLightMode;
-        pHist=history[23];
-    }
+    if (millis() - lastAutoSave < AUTOSAVE_INTERVAL_MS) return;
+
+    // Guardado periódico de vegetación, floración y tiempo transcurrido.
+    // No se escribe en cada toque para mantener fluida la interfaz táctil.
+    saveState(true);
+    lastAutoSave = millis();
+    stateDirty   = false;
 }
 
 // ─────────────────────────────────────────────
@@ -701,75 +696,10 @@ void setup() {
     lastAutoSave   = millis();
     weedNeedsRedraw = true;
 
-    // Pantalla de bienvenida
-    drawSplash();
+    // Arrancar directamente en la interfaz principal, sin pantalla de bienvenida.
+    uiNeedsFullRedraw = true;
+    drawUI();
 }
-
-// ─────────────────────────────────────────────
-//  SPLASH –  carga logo desde SD (rápido, sin watchdog)
-//  Guarda el archivo 'logo.raw' en la raíz de la SD
-// ─────────────────────────────────────────────
-void drawSplash() {
-    tft.fillScreen(MI_NEGRO);
-
-    const int LOGO_W = 220;
-    const int LOGO_H = 220;
-    int x0 = (tft.width()  - LOGO_W) / 2;   // 50
-    int y0 = (tft.height() - LOGO_H) / 2;   // 10
-
-    if (!SD.exists("/logo.raw")) {
-        // Fallback si no hay logo en SD
-        tft.setTextSize(2);
-        tft.setTextColor(MI_VERDE_NEON, MI_NEGRO);
-        tft.setCursor(60, 100);
-        tft.print("GROW CTRL v2");
-        delay(800);
-        tft.fillScreen(MI_NEGRO);
-        return;
-    }
-
-    File f = SD.open("/logo.raw");
-    if (!f || f.size() < LOGO_W * LOGO_H * 2) {
-        tft.setTextSize(1);
-        tft.setTextColor(ST77XX_RED, MI_NEGRO);
-        tft.setCursor(20, 110);
-        tft.print("Error logo.raw");
-        delay(1000);
-        tft.fillScreen(MI_NEGRO);
-        return;
-    }
-
-    // Dibujado ultra-rápido: leer chunks de SD y pushColor
-    tft.startWrite();
-    tft.setAddrWindow(x0, y0, LOGO_W, LOGO_H);
-    uint8_t buf[512];           // buffer de 512 bytes = 256 pixels
-    while (f.available()) {
-        int n = f.read(buf, sizeof(buf));
-        for (int i = 0; i < n; i += 2) {
-            uint16_t c = (buf[i] << 8) | buf[i + 1];
-            tft.pushColor(c);
-        }
-    }
-    tft.endWrite();
-    f.close();
-
-    // Esperar 2s o tocar para saltar
-    unsigned long t0 = millis();
-    while (millis() - t0 < 2000) {
-        if (ts.touched()) {
-            while (ts.touched()) { yield(); delay(10); }
-            break;
-        }
-        yield();
-        delay(50);
-    }
-
-    tft.fillScreen(MI_NEGRO);
-}
-
-// ─────────────────────────────────────────────
-//  SPLASH (opcional – breve animación de inicio)
-// ─────────────────────────────────────────────
 
 void updatePhotoperiod() {
     unsigned long now  = millis();
@@ -1334,12 +1264,8 @@ void loop() {
         drawUI();              // redibuja al instante, sin tocar la SD
     }
 
-    // Guardado diferido: 3 s después del último toque (evita escrituras
-    // de SD en cada tap, que congelaban la interfaz)
-    if (stateDirty && millis()-lastTouchTime > 3000) {
-        stateDirty = false;
-        saveState();
-    }
+    // Los cambios de la interfaz quedan en RAM y se guardan por lote cada
+    // 5 minutos en handleAutoSave(), evitando bloqueos por escritura SD.
 
     // Sensores laterales + weedagotchi
     if (!showGraph && !screensaverActive) {
