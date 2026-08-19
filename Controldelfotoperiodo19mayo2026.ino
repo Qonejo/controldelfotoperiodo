@@ -39,7 +39,7 @@
 #define MI_CYAN_TENUE 0x0410   // cyan oscuro – paneles laterales
 #define MI_GRIS_OSC   0x2104   // fondo de secciones
 #define MI_ROJO_DIM   0x6000   // rojo apagado
-#define MI_AMBER      0xFC60   // ámbar – texto de horario
+#define MI_AMBER      0xFFE0   // amarillo – texto de horario
 #define MI_AZUL_DIM   0x001F   // azul oscuridad
 
 Adafruit_ST7789    tft(TFT_CS, TFT_DC, TFT_RST);
@@ -864,12 +864,14 @@ void drawSoilBars() {
 //  WEEDAGOTCHI  –  renderizado rápido con drawBitmap
 // ─────────────────────────────────────────────
 void drawWeedagotchi() {
-    static int lastSway = -99, lastMood = -1;
-    int sway = (int)(sinf((float)millis() * 0.0014f) * 2.0f);
+    static int lastMood = -1;
     float mood = (remoteSoil1 + remoteSoil2) * 0.5f;
     int moodBucket = (mood >= 60) ? 0 : (mood >= 40) ? 1 : (mood >= 10) ? 2 : 3;
 
-    if (!weedNeedsRedraw && sway == lastSway && moodBucket == lastMood) return;
+    // Evita el parpadeo: la carita ya no se borra/redibuja en cada
+    // pequeño movimiento de animación, solo cuando cambia el estado de ánimo
+    // o cuando se pide un redibujado completo tras limpiar la pantalla.
+    if (!weedNeedsRedraw && moodBucket == lastMood) return;
 
     const int baseX = 238;
     const int baseY = 118;
@@ -885,7 +887,7 @@ void drawWeedagotchi() {
         default:faceBmp = deadFace_bmp;  faceOutline = deadFace_outline_bmp;  break;
     }
 
-    int x = baseX + sway;
+    int x = baseX;
     int y = baseY;
     uint16_t dark  = 0x0320;
     uint16_t light = MI_VERDE_NEON;
@@ -893,7 +895,6 @@ void drawWeedagotchi() {
     tft.drawBitmap(x + 1, y + 1, faceOutline, SPRITE_W, SPRITE_H, dark);
     tft.drawBitmap(x, y, faceBmp, SPRITE_W, SPRITE_H, light);
 
-    lastSway = sway;
     lastMood = moodBucket;
     weedNeedsRedraw = false;
 }
@@ -1247,6 +1248,7 @@ void loop() {
         lastTouchTime = millis();
         if (screensaverActive) {
             screensaverActive = false;
+            tft.fillScreen(MI_NEGRO);
             uiNeedsFullRedraw = true;
             weedNeedsRedraw = true;
             while (ts.touched()) { yield(); delay(10); }
@@ -1296,7 +1298,12 @@ void loop() {
         if (isNight && (millis()-lastTouchTime>30000)) {
             drawScreensaver();
         } else {
-            screensaverActive=false;
+            if (screensaverActive) {
+                screensaverActive = false;
+                tft.fillScreen(MI_NEGRO);
+                uiNeedsFullRedraw = true;
+                weedNeedsRedraw = true;
+            }
             if (!showGraph) drawUI(); else drawGraph();
         }
         lastUIRefresh=millis();
