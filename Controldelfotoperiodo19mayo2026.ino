@@ -103,7 +103,7 @@ unsigned long lastMillis = 0, lastUIRefresh = 0;
 unsigned long lastHistoryUpdate = 0, lastWifiCheck = 0;
 unsigned long touchStartTime = 0, lastTouchActionMs = 0, lastEspNowSend = 0;
 unsigned long lastAutoSave = 0, lastTouchTime = 0;
-const unsigned long AUTOSAVE_INTERVAL_MS = 300000UL;  // guarda estado en SD cada 5 minutos
+const unsigned long AUTOSAVE_INTERVAL_MS = 180000UL;  // guarda estado en SD cada 3 minutos
 
 // ─────────────────────────────────────────────
 //  DATOS REMOTOS
@@ -126,6 +126,7 @@ bool uiNeedsFullRedraw = true;
 bool weedNeedsRedraw   = true;
 bool pendingAction     = false;
 bool stateDirty        = false;   // hay cambios sin guardar aún en SD
+bool sdReady           = false;   // SD inicializada correctamente
 
 // ─────────────────────────────────────────────
 //  CREDENCIALES WiFi
@@ -570,17 +571,19 @@ static bool atomicWrite(const char* finalPath, const String& content) {
 }
 
 void saveHistory() {
+    if (!sdReady) { Serial.println("[SD] historial omitido: SD no inicializada"); return; }
     String buf = "";
     for (int i = 0; i < 24; i++) {
         if (i > 0) buf += ',';
         char tmp[12]; snprintf(tmp, sizeof(tmp), "%.3f", history[i]);
         buf += tmp;
     }
-    atomicWrite("/history.txt", buf);
-    Serial.println("[SD] historial guardado");
+    if (atomicWrite("/history.txt", buf)) Serial.println("[SD] historial guardado");
+    else Serial.println("[SD] ERROR guardando historial");
 }
 
 void loadHistory() {
+    if (!sdReady) return;
     for (int i = 0; i < 24; i++) history[i] = 0.0f;
     if (!SD.exists("/history.txt")) { saveHistory(); return; }
     File f = SD.open("/history.txt");
@@ -598,6 +601,7 @@ void loadHistory() {
 }
 
 void saveState(bool includeHistory = false) {
+    if (!sdReady) { Serial.println("[SD] estado omitido: SD no inicializada"); return; }
     // Incluimos cycleStartEpoch para recuperar el anclaje RTC tras reinicio
     String buf = "";
     char tmp[128];
@@ -610,12 +614,14 @@ void saveState(bool includeHistory = false) {
              (inLightMode ? 1 : 0),
              (long)cycleStartEpoch);
     buf = tmp;
-    atomicWrite("/estado.txt", buf);
+    bool stateSaved = atomicWrite("/estado.txt", buf);
     if (includeHistory) saveHistory();
-    Serial.println("[SD] estado guardado");
+    if (stateSaved) Serial.println("[SD] estado guardado");
+    else Serial.println("[SD] ERROR guardando estado");
 }
 
 void loadState() {
+    if (!sdReady) return;
     if (!SD.exists("/estado.txt")) { saveState(); return; }
     File f = SD.open("/estado.txt");
     if (!f) return;
@@ -642,12 +648,14 @@ void loadState() {
 }
 
 void handleAutoSave() {
-    if (millis() - lastAutoSave < AUTOSAVE_INTERVAL_MS) return;
+    unsigned long now = millis();
+    if (now - lastAutoSave < AUTOSAVE_INTERVAL_MS) return;
 
-    // Guardado periódico de vegetación, floración y tiempo transcurrido.
+    // Guardado periódico cada 3 minutos de vegetación, floración,
+    // fotoperiodo, ancla RTC, VPD e historial.
     // No se escribe en cada toque para mantener fluida la interfaz táctil.
     saveState(true);
-    lastAutoSave = millis();
+    lastAutoSave = now;
     stateDirty   = false;
 }
 
@@ -686,7 +694,13 @@ void setup() {
     ts.begin();
     ts.setRotation(1);
 
-    if (SD.begin(SD_CS)) { loadState(); loadHistory(); }
+    sdReady = SD.begin(SD_CS);
+    if (sdReady) {
+        loadState();
+        loadHistory();
+    } else {
+        Serial.println("[SD] ERROR inicializando SD");
+    }
 
     pinMode(RELAY_PIN, OUTPUT);
     configTime(-21600, 0, "pool.ntp.org"); // UTC-6
@@ -913,12 +927,16 @@ void drawUI() {
         strcpy(lastClock, clockBuf);
     }
 
-    // ── "Ciclo 24h" debajo del reloj ──────────
-    if (uiNeedsFullRedraw) {
+    // ── Total del ciclo debajo del reloj ────────
+    static int pTotalCycleHours = -1;
+    int totalCycleHours = lightHours + darkHours;
+    if (uiNeedsFullRedraw || totalCycleHours != pTotalCycleHours) {
+        tft.fillRect(82, 42, 120, 10, MI_NEGRO);
         tft.setTextSize(1);
         tft.setTextColor(MI_AMBER, MI_NEGRO);
-        tft.setCursor(110, 42);
-        tft.print("Ciclo 24h");
+        tft.setCursor(100, 42);
+        tft.printf("Ciclo %dh", totalCycleHours);
+        pTotalCycleHours = totalCycleHours;
     }
 
     // ── LUZ : 12h  < >  (texto chico) ──
@@ -1265,7 +1283,7 @@ void loop() {
     }
 
     // Los cambios de la interfaz quedan en RAM y se guardan por lote cada
-    // 5 minutos en handleAutoSave(), evitando bloqueos por escritura SD.
+    // 3 minutos en handleAutoSave(), evitando bloqueos por escritura SD.
 
     // Sensores laterales + weedagotchi
     if (!showGraph && !screensaverActive) {
@@ -1307,6 +1325,7 @@ void loop() {
             lastEspNowSend=millis();
         }
 
-        handleAutoSave();
     }
+
+    handleAutoSave();
 }
