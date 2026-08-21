@@ -103,7 +103,7 @@ unsigned long lastMillis = 0, lastUIRefresh = 0;
 unsigned long lastHistoryUpdate = 0, lastWifiCheck = 0;
 unsigned long touchStartTime = 0, lastTouchActionMs = 0, lastEspNowSend = 0;
 unsigned long lastAutoSave = 0, lastTouchTime = 0;
-const unsigned long AUTOSAVE_INTERVAL_MS = 180000UL;  // guarda estado en SD cada 3 minutos
+const unsigned long AUTOSAVE_INTERVAL_MS = 300000UL;  // guarda estado en SD cada 5 minutos
 const char* STATE_PATH = "/estado.txt";
 const char* HISTORY_PATH = "/history.txt";
 
@@ -553,6 +553,28 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
 // ─────────────────────────────────────────────
 static String readFile(const char* path);
 
+static void deselectSpiDevices() {
+    pinMode(TFT_CS, OUTPUT);
+    pinMode(TOUCH_CS, OUTPUT);
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(TFT_CS, HIGH);
+    digitalWrite(TOUCH_CS, HIGH);
+    digitalWrite(SD_CS, HIGH);
+}
+
+static bool initSdCard() {
+    deselectSpiDevices();
+    sdReady = SD.begin(SD_CS);
+    if (!sdReady) Serial.println("[SD] ERROR inicializando SD");
+    return sdReady;
+}
+
+static bool ensureSdReady() {
+    if (sdReady) return true;
+    Serial.println("[SD] reintentando inicializacion");
+    return initSdCard();
+}
+
 static bool writeTextFile(const char* path, const String& content) {
     SD.remove(path);
     File f = SD.open(path, FILE_WRITE);
@@ -589,6 +611,7 @@ static bool atomicWrite(const char* finalPath, const String& content) {
     }
 
     if (!SD.rename(tmpPath, finalPath)) {
+        SD.remove(finalPath);
         File src = SD.open(tmpPath);
         File dst = SD.open(finalPath, FILE_WRITE);
         if (!src || !dst) {
@@ -640,7 +663,7 @@ static String valueForKey(const String& data, const char* key) {
 }
 
 void saveHistory() {
-    if (!sdReady) { Serial.println("[SD] historial omitido: SD no inicializada"); return; }
+    if (!ensureSdReady()) { Serial.println("[SD] historial omitido: SD no inicializada"); return; }
     String buf = "";
     for (int i = 0; i < 24; i++) {
         if (i > 0) buf += ',';
@@ -668,7 +691,7 @@ void loadHistory() {
 }
 
 void saveState(bool includeHistory = false) {
-    if (!sdReady) { Serial.println("[SD] estado omitido: SD no inicializada"); return; }
+    if (!ensureSdReady()) { Serial.println("[SD] estado omitido: SD no inicializada"); return; }
     String buf = "version=2\n";
     buf += "lightHours=" + String(lightHours) + "\n";
     buf += "darkHours=" + String(darkHours) + "\n";
@@ -726,7 +749,7 @@ void handleAutoSave() {
     if (!stateDirty && now - lastAutoSave < AUTOSAVE_INTERVAL_MS) return;
 
     // Guardado inmediato cuando hubo cambios en la interfaz y guardado
-    // periódico cada 3 minutos para conservar avance, ancla RTC, VPD e historial.
+    // periódico cada 5 minutos para conservar avance, ancla RTC, VPD e historial.
     saveState(true);
     lastAutoSave = now;
     stateDirty   = false;
@@ -758,6 +781,7 @@ void setup() {
     addPeer(macCalendarioESP);
 
     delay(500);
+    deselectSpiDevices();
     SPI.begin(12, 13, 11);
     tft.init(240, 320);
     tft.setRotation(1);
@@ -767,12 +791,9 @@ void setup() {
     ts.begin();
     ts.setRotation(1);
 
-    sdReady = SD.begin(SD_CS);
-    if (sdReady) {
+    if (initSdCard()) {
         loadState();
         loadHistory();
-    } else {
-        Serial.println("[SD] ERROR inicializando SD");
     }
 
     pinMode(RELAY_PIN, OUTPUT);
@@ -1365,7 +1386,7 @@ void loop() {
     }
 
     // Los cambios de la interfaz quedan en RAM y se guardan por lote cada
-    // 3 minutos en handleAutoSave(), evitando bloqueos por escritura SD.
+    // 5 minutos en handleAutoSave(), evitando bloqueos por escritura SD.
 
     // Sensores laterales + weedagotchi
     if (!showGraph && !screensaverActive) {
