@@ -104,6 +104,8 @@ unsigned long lastHistoryUpdate = 0, lastWifiCheck = 0;
 unsigned long touchStartTime = 0, lastTouchActionMs = 0, lastEspNowSend = 0;
 unsigned long lastAutoSave = 0, lastTouchTime = 0;
 const unsigned long AUTOSAVE_INTERVAL_MS = 180000UL;  // guarda estado en SD cada 3 minutos
+const char* STATE_PATH = "/estado.txt";
+const char* HISTORY_PATH = "/history.txt";
 
 // ─────────────────────────────────────────────
 //  DATOS REMOTOS
@@ -544,30 +546,97 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
 }
 
 // ─────────────────────────────────────────────
-//  SD  –  ESCRITURA ATÓMICA
-//  Escribe en un temporal propio de cada archivo y luego renombra,
-//  para no perder datos si hay corte de luz.
+//  SD  –  GUARDADO PERSISTENTE EN TEXTO
+//  Se guarda estado legible (clave=valor) y se mantiene un respaldo .bak.
+//  Así, si se corta la luz durante la escritura, al reiniciar se recupera
+//  el último estado completo disponible desde estado.txt o estado.txt.bak.
 // ─────────────────────────────────────────────
+static String readFile(const char* path);
+
+static bool writeTextFile(const char* path, const String& content) {
+    SD.remove(path);
+    File f = SD.open(path, FILE_WRITE);
+    if (!f) return false;
+    size_t written = f.print(content);
+    f.flush();
+    f.close();
+    return written == content.length();
+}
+
 static bool atomicWrite(const char* finalPath, const String& content) {
     String tmpName = String(finalPath) + ".tmp";
+    String bakName = String(finalPath) + ".bak";
     const char* tmpPath = tmpName.c_str();
+    const char* bakPath = bakName.c_str();
+
     SD.remove(tmpPath);
-    File f = SD.open(tmpPath, FILE_WRITE);
-    if (!f) { Serial.println("[SD] ERROR abriendo tmp"); return false; }
-    f.print(content);
-    f.close();
-    SD.remove(finalPath);
+    if (!writeTextFile(tmpPath, content)) {
+        Serial.println("[SD] ERROR escribiendo tmp");
+        SD.remove(tmpPath);
+        return false;
+    }
+
+    SD.remove(bakPath);
+    if (SD.exists(finalPath) && !SD.rename(finalPath, bakPath)) {
+        // Si rename no está disponible, conservamos el archivo actual hasta
+        // verificar que el temporal puede copiarse al destino final.
+        if (!writeTextFile(bakPath, readFile(finalPath))) {
+            Serial.println("[SD] ERROR creando respaldo");
+            SD.remove(tmpPath);
+            return false;
+        }
+        SD.remove(finalPath);
+    }
+
     if (!SD.rename(tmpPath, finalPath)) {
-        // FAT en Arduino no tiene rename en todas las versiones; fallback:
         File src = SD.open(tmpPath);
         File dst = SD.open(finalPath, FILE_WRITE);
-        if (src && dst) {
-            while (src.available()) dst.write(src.read());
+        if (!src || !dst) {
+            if (src) src.close();
+            if (dst) dst.close();
+            if (SD.exists(bakPath) && !SD.exists(finalPath)) SD.rename(bakPath, finalPath);
+            SD.remove(tmpPath);
+            return false;
         }
-        src.close(); dst.close();
+        while (src.available()) dst.write(src.read());
+        dst.flush();
+        src.close();
+        dst.close();
         SD.remove(tmpPath);
     }
-    return true;
+    return SD.exists(finalPath);
+}
+
+static String readFile(const char* path) {
+    File f = SD.open(path);
+    if (!f) return "";
+    String data = f.readString();
+    f.close();
+    return data;
+}
+
+static String readPersistentText(const char* path) {
+    String data = readFile(path);
+    if (data.length() > 0) return data;
+    String bakName = String(path) + ".bak";
+    data = readFile(bakName.c_str());
+    if (data.length() > 0) {
+        Serial.println("[SD] recuperado desde respaldo .bak");
+        atomicWrite(path, data);
+    }
+    return data;
+}
+
+static String valueForKey(const String& data, const char* key) {
+    String prefix = String(key) + "=";
+    int pos = data.indexOf(prefix);
+    if (pos < 0) return "";
+    int start = pos + prefix.length();
+    int end = data.indexOf('\n', start);
+    if (end < 0) end = data.length();
+    String value = data.substring(start, end);
+    value.trim();
+    return value;
 }
 
 void saveHistory() {
@@ -578,17 +647,15 @@ void saveHistory() {
         char tmp[12]; snprintf(tmp, sizeof(tmp), "%.3f", history[i]);
         buf += tmp;
     }
-    if (atomicWrite("/history.txt", buf)) Serial.println("[SD] historial guardado");
+    if (atomicWrite(HISTORY_PATH, buf)) Serial.println("[SD] historial guardado");
     else Serial.println("[SD] ERROR guardando historial");
 }
 
 void loadHistory() {
     if (!sdReady) return;
     for (int i = 0; i < 24; i++) history[i] = 0.0f;
-    if (!SD.exists("/history.txt")) { saveHistory(); return; }
-    File f = SD.open("/history.txt");
-    if (!f) return;
-    String data = f.readString(); f.close();
+    String data = readPersistentText(HISTORY_PATH);
+    if (data.length() == 0) { saveHistory(); return; }
     int from = 0;
     for (int i = 0; i < 24; i++) {
         int comma = data.indexOf(',', from);
@@ -602,19 +669,17 @@ void loadHistory() {
 
 void saveState(bool includeHistory = false) {
     if (!sdReady) { Serial.println("[SD] estado omitido: SD no inicializada"); return; }
-    // Incluimos cycleStartEpoch para recuperar el anclaje RTC tras reinicio
-    String buf = "";
-    char tmp[128];
-    snprintf(tmp, sizeof(tmp), "%d,%d,%d,%d,%d,%.2f,%.2f,%d,%ld",
-             lightHours, darkHours,
-             (isVegetative ? 1 : 0),
-             daysVeg, daysFlower,
-             photoSecondsElapsed,
-             remoteVPD,
-             (inLightMode ? 1 : 0),
-             (long)cycleStartEpoch);
-    buf = tmp;
-    bool stateSaved = atomicWrite("/estado.txt", buf);
+    String buf = "version=2\n";
+    buf += "lightHours=" + String(lightHours) + "\n";
+    buf += "darkHours=" + String(darkHours) + "\n";
+    buf += "isVegetative=" + String(isVegetative ? 1 : 0) + "\n";
+    buf += "daysVeg=" + String(daysVeg) + "\n";
+    buf += "daysFlower=" + String(daysFlower) + "\n";
+    buf += "photoSecondsElapsed=" + String(photoSecondsElapsed, 3) + "\n";
+    buf += "remoteVPD=" + String(remoteVPD, 2) + "\n";
+    buf += "inLightMode=" + String(inLightMode ? 1 : 0) + "\n";
+    buf += "cycleStartEpoch=" + String((long)cycleStartEpoch) + "\n";
+    bool stateSaved = atomicWrite(STATE_PATH, buf);
     if (includeHistory) saveHistory();
     if (stateSaved) Serial.println("[SD] estado guardado");
     else Serial.println("[SD] ERROR guardando estado");
@@ -622,38 +687,46 @@ void saveState(bool includeHistory = false) {
 
 void loadState() {
     if (!sdReady) return;
-    if (!SD.exists("/estado.txt")) { saveState(); return; }
-    File f = SD.open("/estado.txt");
-    if (!f) return;
-    String data = f.readString(); f.close();
-    int v2, lightMode = 1;
-    float savedVPD = 0;
-    long savedEpoch = 0;
-    int parsed = sscanf(data.c_str(),
-        "%d,%d,%d,%d,%d,%lf,%f,%d,%ld",
-        &lightHours, &darkHours, &v2,
-        &daysVeg, &daysFlower,
-        &photoSecondsElapsed,
-        &savedVPD, &lightMode, &savedEpoch);
-    if (parsed >= 6) {
-        isVegetative = (v2 == 1);
-        if (parsed >= 7) remoteVPD   = savedVPD;
-        if (parsed >= 8) inLightMode = (lightMode == 1);
-        if (parsed >= 9 && savedEpoch > 0) {
-            cycleStartEpoch = (time_t)savedEpoch;
-            // Se validará contra RTC en updatePhotoperiod()
+    String data = readPersistentText(STATE_PATH);
+    if (data.length() == 0) { saveState(); return; }
+    if (data.indexOf("=") >= 0) {
+        String v;
+        v = valueForKey(data, "lightHours"); if (v.length()) lightHours = v.toInt();
+        v = valueForKey(data, "darkHours"); if (v.length()) darkHours = v.toInt();
+        v = valueForKey(data, "isVegetative"); if (v.length()) isVegetative = (v.toInt() == 1);
+        v = valueForKey(data, "daysVeg"); if (v.length()) daysVeg = v.toInt();
+        v = valueForKey(data, "daysFlower"); if (v.length()) daysFlower = v.toInt();
+        v = valueForKey(data, "photoSecondsElapsed"); if (v.length()) photoSecondsElapsed = v.toFloat();
+        v = valueForKey(data, "remoteVPD"); if (v.length()) remoteVPD = v.toFloat();
+        v = valueForKey(data, "inLightMode"); if (v.length()) inLightMode = (v.toInt() == 1);
+        v = valueForKey(data, "cycleStartEpoch"); if (v.length()) cycleStartEpoch = (time_t)v.toInt();
+    } else {
+        int v2, lightMode = 1;
+        float savedVPD = 0;
+        long savedEpoch = 0;
+        int parsed = sscanf(data.c_str(), "%d,%d,%d,%d,%d,%lf,%f,%d,%ld",
+            &lightHours, &darkHours, &v2, &daysVeg, &daysFlower,
+            &photoSecondsElapsed, &savedVPD, &lightMode, &savedEpoch);
+        if (parsed >= 6) {
+            isVegetative = (v2 == 1);
+            if (parsed >= 7) remoteVPD = savedVPD;
+            if (parsed >= 8) inLightMode = (lightMode == 1);
+            if (parsed >= 9 && savedEpoch > 0) cycleStartEpoch = (time_t)savedEpoch;
         }
     }
+    lightHours = constrain(lightHours, 1, 24);
+    darkHours = constrain(darkHours, 1, 24);
+    daysVeg = max(0, daysVeg);
+    daysFlower = max(0, daysFlower);
     Serial.println("[SD] estado cargado");
 }
 
 void handleAutoSave() {
     unsigned long now = millis();
-    if (now - lastAutoSave < AUTOSAVE_INTERVAL_MS) return;
+    if (!stateDirty && now - lastAutoSave < AUTOSAVE_INTERVAL_MS) return;
 
-    // Guardado periódico cada 3 minutos de vegetación, floración,
-    // fotoperiodo, ancla RTC, VPD e historial.
-    // No se escribe en cada toque para mantener fluida la interfaz táctil.
+    // Guardado inmediato cuando hubo cambios en la interfaz y guardado
+    // periódico cada 3 minutos para conservar avance, ancla RTC, VPD e historial.
     saveState(true);
     lastAutoSave = now;
     stateDirty   = false;
@@ -726,11 +799,18 @@ void updatePhotoperiod() {
     if (!rtcAnchored) {
         time_t epoch = time(nullptr);
         if (epoch > 1700000000L) {          // NTP válido (año > 2023)
-            // Usamos el valor guardado en SD si existe y es razonable
-            if (cycleStartEpoch > 0 &&
-                difftime(epoch, cycleStartEpoch) >= 0 &&
-                difftime(epoch, cycleStartEpoch) < totalSecs * 30) {
-                // Ancla restaurada desde SD – no modificar cycleStartEpoch
+            // Usamos el valor guardado en SD aunque hayan pasado muchos días.
+            // Si el equipo estuvo apagado, contamos todos los ciclos completos
+            // transcurridos y avanzamos el ancla hasta el ciclo actual.
+            if (cycleStartEpoch > 0 && difftime(epoch, cycleStartEpoch) >= 0) {
+                double elapsedSinceSavedStart = difftime(epoch, cycleStartEpoch);
+                unsigned long completedCycles = (unsigned long)(elapsedSinceSavedStart / totalSecs);
+                if (completedCycles > 0) {
+                    cycleStartEpoch += (time_t)(completedCycles * totalSecs);
+                    if (isVegetative) daysVeg += completedCycles;
+                    else daysFlower += completedCycles;
+                    saveState(true);
+                }
             } else {
                 // Primera vez: calculamos el inicio del ciclo actual
                 // restando los segundos ya transcurridos
