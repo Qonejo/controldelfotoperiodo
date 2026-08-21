@@ -103,7 +103,7 @@ unsigned long lastMillis = 0, lastUIRefresh = 0;
 unsigned long lastHistoryUpdate = 0, lastWifiCheck = 0;
 unsigned long touchStartTime = 0, lastTouchActionMs = 0, lastEspNowSend = 0;
 unsigned long lastAutoSave = 0, lastTouchTime = 0;
-const unsigned long AUTOSAVE_INTERVAL_MS = 180000UL;  // guarda estado en SD cada 3 minutos
+const unsigned long AUTOSAVE_INTERVAL_MS = 300000UL;  // guarda estado en SD cada 5 minutos
 const char* STATE_PATH = "/estado.txt";
 const char* HISTORY_PATH = "/history.txt";
 
@@ -726,7 +726,7 @@ void handleAutoSave() {
     if (!stateDirty && now - lastAutoSave < AUTOSAVE_INTERVAL_MS) return;
 
     // Guardado inmediato cuando hubo cambios en la interfaz y guardado
-    // periódico cada 3 minutos para conservar avance, ancla RTC, VPD e historial.
+    // periódico cada 5 minutos para conservar avance, ancla RTC, VPD e historial.
     saveState(true);
     lastAutoSave = now;
     stateDirty   = false;
@@ -1365,7 +1365,7 @@ void loop() {
     }
 
     // Los cambios de la interfaz quedan en RAM y se guardan por lote cada
-    // 3 minutos en handleAutoSave(), evitando bloqueos por escritura SD.
+    // 5 minutos en handleAutoSave(), evitando bloqueos por escritura SD.
 
     // Sensores laterales + weedagotchi
     if (!showGraph && !screensaverActive) {
