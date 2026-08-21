@@ -861,41 +861,96 @@ void drawSoilBars() {
 }
 
 // ─────────────────────────────────────────────
-//  WEEDAGOTCHI  –  renderizado rápido con drawBitmap
+//  WEEDAGOTCHI  –  casita animada estilo tamagotchi
 // ─────────────────────────────────────────────
 void drawWeedagotchi() {
     static int lastMood = -1;
+    static int lastEyeOffset = 99;
+    static bool lastBlink = false;
+
     float mood = (remoteSoil1 + remoteSoil2) * 0.5f;
     int moodBucket = (mood >= 60) ? 0 : (mood >= 40) ? 1 : (mood >= 10) ? 2 : 3;
 
-    // Evita el parpadeo: la carita ya no se borra/redibuja en cada
-    // pequeño movimiento de animación, solo cuando cambia el estado de ánimo
-    // o cuando se pide un redibujado completo tras limpiar la pantalla.
-    if (!weedNeedsRedraw && moodBucket == lastMood) return;
+    // Animación no bloqueante: mira izquierda/centro/derecha y parpadea,
+    // sin usar delay() para no detener sensores, touch ni comunicación ESP-NOW.
+    unsigned long frameMs = millis() % 5000UL;
+    int eyeOffset = 0;
+    bool blink = false;
+    if (frameMs < 1200UL) {
+        eyeOffset = -3;
+    } else if (frameMs < 2400UL) {
+        eyeOffset = 0;
+    } else if (frameMs < 3600UL) {
+        eyeOffset = 3;
+    } else if (frameMs < 3800UL) {
+        blink = true;
+    }
+
+    if (!weedNeedsRedraw && moodBucket == lastMood &&
+        eyeOffset == lastEyeOffset && blink == lastBlink) {
+        return;
+    }
 
     const int baseX = 238;
     const int baseY = 118;
     const int margin = 3;
+    const int houseX = baseX + 3;
+    const int houseY = baseY + 3;
+    const int houseW = 57;
+    const int bodyY = houseY + 18;
+    const int bodyH = 30;
+
+    uint16_t bodyColor = (moodBucket <= 1) ? MI_VERDE_NEON : MI_LIMA;
+    uint16_t shadowColor = 0x0320;
+    uint16_t moodColor = (moodBucket == 0) ? MI_VERDE_NEON :
+                         (moodBucket == 1) ? MI_AMBER :
+                         (moodBucket == 2) ? MI_NARANJA : ST77XX_RED;
+
     tft.fillRect(baseX - margin, baseY - margin, SPRITE_W + margin*2, SPRITE_H + margin*2, MI_NEGRO);
 
-    const uint8_t *faceBmp = nullptr;
-    const uint8_t *faceOutline = nullptr;
-    switch (moodBucket) {
-        case 0: faceBmp = happyFace_bmp; faceOutline = happyFace_outline_bmp; break;
-        case 1: faceBmp = angryFace_bmp; faceOutline = angryFace_outline_bmp; break;
-        case 2: faceBmp = sadFace_bmp;   faceOutline = sadFace_outline_bmp;   break;
-        default:faceBmp = deadFace_bmp;  faceOutline = deadFace_outline_bmp;  break;
+    // Sombra y silueta de casita.
+    tft.drawTriangle(houseX + 2, bodyY + 1, houseX + houseW / 2 + 1, houseY + 1,
+                     houseX + houseW - 2, bodyY + 1, shadowColor);
+    tft.drawRoundRect(houseX + 8, bodyY + 1, houseW - 16, bodyH, 5, shadowColor);
+    tft.drawTriangle(houseX + 1, bodyY, houseX + houseW / 2, houseY,
+                     houseX + houseW - 3, bodyY, moodColor);
+    tft.drawRoundRect(houseX + 7, bodyY, houseW - 16, bodyH, 5, bodyColor);
+    tft.drawRect(houseX + 40, houseY + 7, 8, 9, MI_AMBER);
+
+    // Cara animada dentro de la casa.
+    int leftEyeX = houseX + 21 + eyeOffset;
+    int rightEyeX = houseX + 36 + eyeOffset;
+    int eyeY = bodyY + 12;
+    if (blink) {
+        tft.drawLine(houseX + 16, eyeY, houseX + 25, eyeY, MI_NEGRO);
+        tft.drawLine(houseX + 31, eyeY, houseX + 40, eyeY, MI_NEGRO);
+    } else {
+        tft.fillCircle(leftEyeX, eyeY, 3, MI_NEGRO);
+        tft.fillCircle(rightEyeX, eyeY, 3, MI_NEGRO);
+        tft.drawPixel(leftEyeX - 1, eyeY - 1, MI_BLANCO);
+        tft.drawPixel(rightEyeX - 1, eyeY - 1, MI_BLANCO);
     }
 
-    int x = baseX;
-    int y = baseY;
-    uint16_t dark  = 0x0320;
-    uint16_t light = MI_VERDE_NEON;
+    // Boca según estado de humedad/salud.
+    int mouthY = bodyY + 22;
+    if (moodBucket == 0) {
+        tft.drawFastHLine(houseX + 24, mouthY + 2, 6, MI_NEGRO);
+        tft.drawPixel(houseX + 23, mouthY + 1, MI_NEGRO);
+        tft.drawPixel(houseX + 30, mouthY + 1, MI_NEGRO);
+    } else if (moodBucket == 3) {
+        tft.drawLine(houseX + 22, mouthY + 2, houseX + 29, mouthY - 2, MI_NEGRO);
+        tft.drawLine(houseX + 34, mouthY - 2, houseX + 41, mouthY + 2, MI_NEGRO);
+    } else {
+        tft.drawFastHLine(houseX + 24, mouthY, 12, MI_NEGRO);
+    }
 
-    tft.drawBitmap(x + 1, y + 1, faceOutline, SPRITE_W, SPRITE_H, dark);
-    tft.drawBitmap(x, y, faceBmp, SPRITE_W, SPRITE_H, light);
+    // Mejillas pixel-art.
+    tft.drawPixel(houseX + 13, bodyY + 20, moodColor);
+    tft.drawPixel(houseX + 44, bodyY + 20, moodColor);
 
     lastMood = moodBucket;
+    lastEyeOffset = eyeOffset;
+    lastBlink = blink;
     weedNeedsRedraw = false;
 }
 
