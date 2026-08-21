@@ -103,9 +103,7 @@ unsigned long lastMillis = 0, lastUIRefresh = 0;
 unsigned long lastHistoryUpdate = 0, lastWifiCheck = 0;
 unsigned long touchStartTime = 0, lastTouchActionMs = 0, lastEspNowSend = 0;
 unsigned long lastAutoSave = 0, lastTouchTime = 0;
-unsigned long lastSdRetry = 0;
 const unsigned long AUTOSAVE_INTERVAL_MS = 180000UL;  // guarda estado en SD cada 3 minutos
-const unsigned long SD_RETRY_INTERVAL_MS = 30000UL;   // reintenta montar SD si falló al arrancar
 
 // ─────────────────────────────────────────────
 //  DATOS REMOTOS
@@ -554,62 +552,20 @@ static bool atomicWrite(const char* finalPath, const String& content) {
     String tmpName = String(finalPath) + ".tmp";
     const char* tmpPath = tmpName.c_str();
     SD.remove(tmpPath);
-
     File f = SD.open(tmpPath, FILE_WRITE);
-    if (!f) {
-        Serial.println("[SD] ERROR abriendo tmp");
-        return false;
-    }
-
-    size_t expected = content.length();
-    size_t written = f.print(content);
-    f.flush();
+    if (!f) { Serial.println("[SD] ERROR abriendo tmp"); return false; }
+    f.print(content);
     f.close();
-    if (written != expected) {
-        Serial.println("[SD] ERROR escritura incompleta");
-        SD.remove(tmpPath);
-        return false;
-    }
-
-    // Verifica que el temporal exista antes de tocar el archivo anterior.
-    File check = SD.open(tmpPath, FILE_READ);
-    if (!check || check.size() != expected) {
-        if (check) check.close();
-        Serial.println("[SD] ERROR verificando tmp");
-        SD.remove(tmpPath);
-        return false;
-    }
-    check.close();
-
     SD.remove(finalPath);
-    if (SD.rename(tmpPath, finalPath)) return true;
-
-    // FAT en Arduino no tiene rename en todas las versiones; fallback con copia
-    // verificada para no reportar guardado si realmente no quedó en la tarjeta.
-    File src = SD.open(tmpPath, FILE_READ);
-    File dst = SD.open(finalPath, FILE_WRITE);
-    if (!src || !dst) {
-        if (src) src.close();
-        if (dst) dst.close();
-        Serial.println("[SD] ERROR fallback open");
-        return false;
-    }
-
-    size_t copied = 0;
-    while (src.available()) {
-        int b = src.read();
-        if (b < 0) break;
-        if (dst.write((uint8_t)b) != 1) break;
-        copied++;
-    }
-    dst.flush();
-    src.close();
-    dst.close();
-    SD.remove(tmpPath);
-
-    if (copied != expected) {
-        Serial.println("[SD] ERROR fallback incompleto");
-        return false;
+    if (!SD.rename(tmpPath, finalPath)) {
+        // FAT en Arduino no tiene rename en todas las versiones; fallback:
+        File src = SD.open(tmpPath);
+        File dst = SD.open(finalPath, FILE_WRITE);
+        if (src && dst) {
+            while (src.available()) dst.write(src.read());
+        }
+        src.close(); dst.close();
+        SD.remove(tmpPath);
     }
     return true;
 }
@@ -644,8 +600,8 @@ void loadHistory() {
     Serial.println("[SD] historial cargado");
 }
 
-bool saveState(bool includeHistory = false) {
-    if (!sdReady) { Serial.println("[SD] estado omitido: SD no inicializada"); return false; }
+void saveState(bool includeHistory = false) {
+    if (!sdReady) { Serial.println("[SD] estado omitido: SD no inicializada"); return; }
     // Incluimos cycleStartEpoch para recuperar el anclaje RTC tras reinicio
     String buf = "";
     char tmp[128];
@@ -662,7 +618,6 @@ bool saveState(bool includeHistory = false) {
     if (includeHistory) saveHistory();
     if (stateSaved) Serial.println("[SD] estado guardado");
     else Serial.println("[SD] ERROR guardando estado");
-    return stateSaved;
 }
 
 void loadState() {
@@ -694,26 +649,14 @@ void loadState() {
 
 void handleAutoSave() {
     unsigned long now = millis();
-
-    // Si la SD no montó al arrancar o se desconectó, reintenta sin bloquear.
-    if (!sdReady && now - lastSdRetry >= SD_RETRY_INTERVAL_MS) {
-        lastSdRetry = now;
-        sdReady = SD.begin(SD_CS);
-        if (sdReady) Serial.println("[SD] reinicializada");
-    }
-
     if (now - lastAutoSave < AUTOSAVE_INTERVAL_MS) return;
 
     // Guardado periódico cada 3 minutos de vegetación, floración,
-    // fotoperiodo, ancla RTC, VPD e historial. Solo se marca como guardado
-    // cuando la escritura realmente terminó bien.
-    bool saved = saveState(true);
-    if (saved) {
-        lastAutoSave = now;
-        stateDirty   = false;
-    } else {
-        Serial.println("[SD] autosave pendiente");
-    }
+    // fotoperiodo, ancla RTC, VPD e historial.
+    // No se escribe en cada toque para mantener fluida la interfaz táctil.
+    saveState(true);
+    lastAutoSave = now;
+    stateDirty   = false;
 }
 
 // ─────────────────────────────────────────────
@@ -918,35 +861,17 @@ void drawSoilBars() {
 }
 
 // ─────────────────────────────────────────────
-//  WEEDAGOTCHI  –  hojita original con carita animada
+//  WEEDAGOTCHI  –  renderizado rápido con drawBitmap
 // ─────────────────────────────────────────────
 void drawWeedagotchi() {
     static int lastMood = -1;
-    static int lastEyeOffset = 99;
-    static bool lastBlink = false;
-
     float mood = (remoteSoil1 + remoteSoil2) * 0.5f;
     int moodBucket = (mood >= 60) ? 0 : (mood >= 40) ? 1 : (mood >= 10) ? 2 : 3;
 
-    // Animación no bloqueante estilo tamagotchi: mira izquierda/centro/derecha
-    // y parpadea sin delay(), para no detener sensores, touch ni ESP-NOW.
-    unsigned long frameMs = millis() % 5000UL;
-    int eyeOffset = 0;
-    bool blink = false;
-    if (frameMs < 1200UL) {
-        eyeOffset = -3;
-    } else if (frameMs < 2400UL) {
-        eyeOffset = 0;
-    } else if (frameMs < 3600UL) {
-        eyeOffset = 3;
-    } else if (frameMs < 3800UL) {
-        blink = true;
-    }
-
-    if (!weedNeedsRedraw && moodBucket == lastMood &&
-        eyeOffset == lastEyeOffset && blink == lastBlink) {
-        return;
-    }
+    // Evita el parpadeo: la carita ya no se borra/redibuja en cada
+    // pequeño movimiento de animación, solo cuando cambia el estado de ánimo
+    // o cuando se pide un redibujado completo tras limpiar la pantalla.
+    if (!weedNeedsRedraw && moodBucket == lastMood) return;
 
     const int baseX = 238;
     const int baseY = 118;
@@ -962,48 +887,15 @@ void drawWeedagotchi() {
         default:faceBmp = deadFace_bmp;  faceOutline = deadFace_outline_bmp;  break;
     }
 
+    int x = baseX;
+    int y = baseY;
     uint16_t dark  = 0x0320;
-    uint16_t light = (moodBucket == 3) ? MI_NARANJA : MI_VERDE_NEON;
-    uint16_t moodColor = (moodBucket == 0) ? MI_VERDE_NEON :
-                         (moodBucket == 1) ? MI_AMBER :
-                         (moodBucket == 2) ? MI_NARANJA : ST77XX_RED;
+    uint16_t light = MI_VERDE_NEON;
 
-    // Conserva la forma original de la hojita; solo se redibuja la carita encima.
-    tft.drawBitmap(baseX + 1, baseY + 1, faceOutline, SPRITE_W, SPRITE_H, dark);
-    tft.drawBitmap(baseX, baseY, faceBmp, SPRITE_W, SPRITE_H, light);
-
-    // Limpia la zona de la cara del bitmap original y pinta los ojos animados.
-    tft.fillRect(baseX + 18, baseY + 25, 28, 19, light);
-    int leftEyeX = baseX + 25 + eyeOffset;
-    int rightEyeX = baseX + 39 + eyeOffset;
-    int eyeY = baseY + 31;
-    if (blink) {
-        tft.drawLine(baseX + 20, eyeY, baseX + 29, eyeY, MI_NEGRO);
-        tft.drawLine(baseX + 34, eyeY, baseX + 43, eyeY, MI_NEGRO);
-    } else {
-        tft.fillCircle(leftEyeX, eyeY, 3, MI_NEGRO);
-        tft.fillCircle(rightEyeX, eyeY, 3, MI_NEGRO);
-        tft.drawPixel(leftEyeX - 1, eyeY - 1, MI_BLANCO);
-        tft.drawPixel(rightEyeX - 1, eyeY - 1, MI_BLANCO);
-    }
-
-    int mouthY = baseY + 40;
-    if (moodBucket == 0) {
-        tft.drawFastHLine(baseX + 29, mouthY + 2, 6, MI_NEGRO);
-        tft.drawPixel(baseX + 28, mouthY + 1, MI_NEGRO);
-        tft.drawPixel(baseX + 35, mouthY + 1, MI_NEGRO);
-    } else if (moodBucket == 3) {
-        tft.drawLine(baseX + 27, mouthY + 2, baseX + 32, mouthY - 1, MI_NEGRO);
-        tft.drawLine(baseX + 36, mouthY - 1, baseX + 41, mouthY + 2, MI_NEGRO);
-    } else {
-        tft.drawFastHLine(baseX + 27, mouthY, 14, MI_NEGRO);
-    }
-    tft.drawPixel(baseX + 19, baseY + 38, moodColor);
-    tft.drawPixel(baseX + 45, baseY + 38, moodColor);
+    tft.drawBitmap(x + 1, y + 1, faceOutline, SPRITE_W, SPRITE_H, dark);
+    tft.drawBitmap(x, y, faceBmp, SPRITE_W, SPRITE_H, light);
 
     lastMood = moodBucket;
-    lastEyeOffset = eyeOffset;
-    lastBlink = blink;
     weedNeedsRedraw = false;
 }
 
