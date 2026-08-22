@@ -103,8 +103,10 @@ unsigned long lastMillis = 0, lastUIRefresh = 0;
 unsigned long lastHistoryUpdate = 0, lastWifiCheck = 0;
 unsigned long touchStartTime = 0, lastTouchActionMs = 0, lastEspNowSend = 0;
 unsigned long lastAutoSave = 0, lastTouchTime = 0, lastStateChangeMs = 0;
+unsigned long lastStateSaveAttempt = 0, lastHistorySaveAttempt = 0;
 const unsigned long AUTOSAVE_INTERVAL_MS = 300000UL;  // guarda avance en SD cada 5 minutos
-const unsigned long SAVE_AFTER_TOUCH_RELEASE_MS = 800UL; // confirma cambios al soltar sin trabar el touch
+const unsigned long SAVE_AFTER_TOUCH_RELEASE_MS = 1500UL; // agrupa cambios consecutivos del touch
+const unsigned long SD_SAVE_RETRY_MS = 10000UL; // evita reintentos SPI continuos si la SD falla
 const char* STATE_PATH = "/estado.txt";
 const char* HISTORY_PATH = "/history.txt";
 
@@ -129,6 +131,7 @@ bool uiNeedsFullRedraw = true;
 bool weedNeedsRedraw   = true;
 bool pendingAction     = false;
 bool stateDirty        = false;   // hay cambios sin guardar aún en SD
+bool historyDirty      = false;   // historial pendiente; no bloquea el guardado del estado
 bool sdReady           = false;   // SD inicializada correctamente
 bool touchWasActive    = false;   // evita guardar mientras el usuario mantiene pulsado
 
@@ -587,6 +590,29 @@ static bool writeTextFile(const char* path, const String& content) {
     return written == content.length();
 }
 
+static bool copyFile(const char* sourcePath, const char* destinationPath) {
+    File src = SD.open(sourcePath, FILE_READ);
+    if (!src) return false;
+    SD.remove(destinationPath);
+    File dst = SD.open(destinationPath, FILE_WRITE);
+    if (!dst) {
+        src.close();
+        return false;
+    }
+
+    size_t copied = 0;
+    while (src.available()) {
+        int value = src.read();
+        if (value < 0 || dst.write((uint8_t)value) != 1) break;
+        copied++;
+    }
+    size_t expected = src.size();
+    dst.flush();
+    src.close();
+    dst.close();
+    return copied == expected;
+}
+
 static bool atomicWrite(const char* finalPath, const String& content) {
     String tmpName = String(finalPath) + ".tmp";
     String bakName = String(finalPath) + ".bak";
@@ -600,11 +626,9 @@ static bool atomicWrite(const char* finalPath, const String& content) {
         return false;
     }
 
-    SD.remove(bakPath);
-    if (SD.exists(finalPath) && !SD.rename(finalPath, bakPath)) {
-        // Si rename no está disponible, conservamos el archivo actual hasta
-        // verificar que el temporal puede copiarse al destino final.
-        if (!writeTextFile(bakPath, readFile(finalPath))) {
+    if (SD.exists(finalPath)) {
+        SD.remove(bakPath);
+        if (!SD.rename(finalPath, bakPath) && !copyFile(finalPath, bakPath)) {
             Serial.println("[SD] ERROR creando respaldo");
             SD.remove(tmpPath);
             return false;
@@ -613,23 +637,19 @@ static bool atomicWrite(const char* finalPath, const String& content) {
     }
 
     if (!SD.rename(tmpPath, finalPath)) {
-        SD.remove(finalPath);
-        File src = SD.open(tmpPath);
-        File dst = SD.open(finalPath, FILE_WRITE);
-        if (!src || !dst) {
-            if (src) src.close();
-            if (dst) dst.close();
-            if (SD.exists(bakPath) && !SD.exists(finalPath)) SD.rename(bakPath, finalPath);
+        if (!copyFile(tmpPath, finalPath)) {
+            SD.remove(finalPath);
+            if (SD.exists(bakPath)) SD.rename(bakPath, finalPath);
             SD.remove(tmpPath);
             return false;
         }
-        while (src.available()) dst.write(src.read());
-        dst.flush();
-        src.close();
-        dst.close();
         SD.remove(tmpPath);
     }
-    return SD.exists(finalPath);
+    if (!SD.exists(finalPath)) {
+        if (SD.exists(bakPath)) SD.rename(bakPath, finalPath);
+        return false;
+    }
+    return true;
 }
 
 static String readFile(const char* path) {
@@ -695,7 +715,7 @@ void loadHistory() {
     Serial.println("[SD] historial cargado");
 }
 
-bool saveState(bool includeHistory = false) {
+bool saveState() {
     if (!ensureSdReady()) { Serial.println("[SD] estado omitido: SD no inicializada"); return false; }
     String buf = "version=2\n";
     buf += "lightHours=" + String(lightHours) + "\n";
@@ -708,12 +728,10 @@ bool saveState(bool includeHistory = false) {
     buf += "inLightMode=" + String(inLightMode ? 1 : 0) + "\n";
     buf += "cycleStartEpoch=" + String((long)cycleStartEpoch) + "\n";
     bool stateSaved = atomicWrite(STATE_PATH, buf);
-    bool historySaved = true;
-    if (includeHistory) historySaved = saveHistory();
     deselectSpiDevices();
     if (stateSaved) Serial.println("[SD] estado guardado");
     else Serial.println("[SD] ERROR guardando estado");
-    return stateSaved && historySaved;
+    return stateSaved;
 }
 
 void loadState() {
@@ -759,14 +777,24 @@ void handleAutoSave() {
         && !touchWasActive
         && (now - lastStateChangeMs >= SAVE_AFTER_TOUCH_RELEASE_MS);
 
-    if (!periodicSaveDue && !dirtySaveDue) return;
+    // La SD comparte SPI con pantalla y touch: nunca se escribe durante una
+    // pulsación. Estado e historial se guardan por separado para que un fallo
+    // del historial no deje el estado pendiente ni provoque una pausa continua.
+    if (!touchWasActive && (periodicSaveDue || dirtySaveDue)
+        && now - lastStateSaveAttempt >= SD_SAVE_RETRY_MS) {
+        lastStateSaveAttempt = now;
+        if (saveState()) {
+            lastAutoSave = now;
+            stateDirty = false;
+        }
+    }
 
-    // No escribimos la SD mientras el dedo sigue presionando: la SD comparte SPI
-    // con pantalla/touch y eso se siente como interfaz trabada. Al soltar, se
-    // confirma rápido para que los cambios sobrevivan un apagado.
-    if (saveState(true)) {
-        lastAutoSave = now;
-        stateDirty   = false;
+    if (!touchWasActive && historyDirty
+        && now - lastHistorySaveAttempt >= SD_SAVE_RETRY_MS) {
+        lastHistorySaveAttempt = now;
+        if (saveHistory()) {
+            historyDirty = false;
+        }
     }
 }
 
@@ -845,7 +873,8 @@ void updatePhotoperiod() {
                     cycleStartEpoch += (time_t)(completedCycles * totalSecs);
                     if (isVegetative) daysVeg += completedCycles;
                     else daysFlower += completedCycles;
-                    saveState(true);
+                    stateDirty = true;
+                    lastStateChangeMs = millis();
                 }
             } else {
                 // Primera vez: calculamos el inicio del ciclo actual
@@ -866,7 +895,8 @@ void updatePhotoperiod() {
             elapsed -= totalSecs;
             cycleStartEpoch += (time_t)totalSecs;
             if (isVegetative) daysVeg++; else daysFlower++;
-            saveState();
+            stateDirty = true;
+            lastStateChangeMs = millis();
         }
         if (elapsed < 0) elapsed = 0;
         photoSecondsElapsed = elapsed;
@@ -876,7 +906,8 @@ void updatePhotoperiod() {
         if (photoSecondsElapsed >= totalSecs) {
             photoSecondsElapsed = 0;
             if (isVegetative) daysVeg++; else daysFlower++;
-            saveState();
+            stateDirty = true;
+            lastStateChangeMs = millis();
         }
     }
 
@@ -893,6 +924,7 @@ void updatePhotoperiod() {
         for (int i = 0; i < 23; i++) history[i] = history[i+1];
         history[23] = (photoSecondsElapsed / totalSecs) * 100.0;
         lastHistoryUpdate = now;
+        historyDirty = true;
     }
 }
 
