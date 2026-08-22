@@ -102,8 +102,9 @@ uint8_t macSoilNode[]     = {0xAC,0xA7,0x04,0xB8,0x0C,0xAC};
 unsigned long lastMillis = 0, lastUIRefresh = 0;
 unsigned long lastHistoryUpdate = 0, lastWifiCheck = 0;
 unsigned long touchStartTime = 0, lastTouchActionMs = 0, lastEspNowSend = 0;
-unsigned long lastAutoSave = 0, lastTouchTime = 0;
-const unsigned long AUTOSAVE_INTERVAL_MS = 300000UL;  // guarda estado en SD cada 5 minutos
+unsigned long lastAutoSave = 0, lastTouchTime = 0, lastStateChangeMs = 0;
+const unsigned long AUTOSAVE_INTERVAL_MS = 300000UL;  // guarda avance en SD cada 5 minutos
+const unsigned long SAVE_AFTER_TOUCH_RELEASE_MS = 800UL; // confirma cambios al soltar sin trabar el touch
 const char* STATE_PATH = "/estado.txt";
 const char* HISTORY_PATH = "/history.txt";
 
@@ -129,6 +130,7 @@ bool weedNeedsRedraw   = true;
 bool pendingAction     = false;
 bool stateDirty        = false;   // hay cambios sin guardar aún en SD
 bool sdReady           = false;   // SD inicializada correctamente
+bool touchWasActive    = false;   // evita guardar mientras el usuario mantiene pulsado
 
 // ─────────────────────────────────────────────
 //  CREDENCIALES WiFi
@@ -662,16 +664,19 @@ static String valueForKey(const String& data, const char* key) {
     return value;
 }
 
-void saveHistory() {
-    if (!ensureSdReady()) { Serial.println("[SD] historial omitido: SD no inicializada"); return; }
+bool saveHistory() {
+    if (!ensureSdReady()) { Serial.println("[SD] historial omitido: SD no inicializada"); return false; }
     String buf = "";
     for (int i = 0; i < 24; i++) {
         if (i > 0) buf += ',';
         char tmp[12]; snprintf(tmp, sizeof(tmp), "%.3f", history[i]);
         buf += tmp;
     }
-    if (atomicWrite(HISTORY_PATH, buf)) Serial.println("[SD] historial guardado");
+    bool ok = atomicWrite(HISTORY_PATH, buf);
+    deselectSpiDevices();
+    if (ok) Serial.println("[SD] historial guardado");
     else Serial.println("[SD] ERROR guardando historial");
+    return ok;
 }
 
 void loadHistory() {
@@ -690,8 +695,8 @@ void loadHistory() {
     Serial.println("[SD] historial cargado");
 }
 
-void saveState(bool includeHistory = false) {
-    if (!ensureSdReady()) { Serial.println("[SD] estado omitido: SD no inicializada"); return; }
+bool saveState(bool includeHistory = false) {
+    if (!ensureSdReady()) { Serial.println("[SD] estado omitido: SD no inicializada"); return false; }
     String buf = "version=2\n";
     buf += "lightHours=" + String(lightHours) + "\n";
     buf += "darkHours=" + String(darkHours) + "\n";
@@ -703,9 +708,12 @@ void saveState(bool includeHistory = false) {
     buf += "inLightMode=" + String(inLightMode ? 1 : 0) + "\n";
     buf += "cycleStartEpoch=" + String((long)cycleStartEpoch) + "\n";
     bool stateSaved = atomicWrite(STATE_PATH, buf);
-    if (includeHistory) saveHistory();
+    bool historySaved = true;
+    if (includeHistory) historySaved = saveHistory();
+    deselectSpiDevices();
     if (stateSaved) Serial.println("[SD] estado guardado");
     else Serial.println("[SD] ERROR guardando estado");
+    return stateSaved && historySaved;
 }
 
 void loadState() {
@@ -746,13 +754,20 @@ void loadState() {
 
 void handleAutoSave() {
     unsigned long now = millis();
-    if (!stateDirty && now - lastAutoSave < AUTOSAVE_INTERVAL_MS) return;
+    bool periodicSaveDue = !touchWasActive && (now - lastAutoSave >= AUTOSAVE_INTERVAL_MS);
+    bool dirtySaveDue = stateDirty
+        && !touchWasActive
+        && (now - lastStateChangeMs >= SAVE_AFTER_TOUCH_RELEASE_MS);
 
-    // Guardado inmediato cuando hubo cambios en la interfaz y guardado
-    // periódico cada 5 minutos para conservar avance, ancla RTC, VPD e historial.
-    saveState(true);
-    lastAutoSave = now;
-    stateDirty   = false;
+    if (!periodicSaveDue && !dirtySaveDue) return;
+
+    // No escribimos la SD mientras el dedo sigue presionando: la SD comparte SPI
+    // con pantalla/touch y eso se siente como interfaz trabada. Al soltar, se
+    // confirma rápido para que los cambios sobrevivan un apagado.
+    if (saveState(true)) {
+        lastAutoSave = now;
+        stateDirty   = false;
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -1323,6 +1338,7 @@ void handleAction(int tx, int ty, int step) {
     uiNeedsFullRedraw = true;
     pendingAction = true;
     stateDirty     = true;
+    lastStateChangeMs = millis();
 }
 
 void loop() {
@@ -1345,14 +1361,15 @@ void loop() {
     if (getLocalTimeNoBlock(&ti) && ti.tm_hour>=0 && ti.tm_hour<8) isNight=true;
 
     // Touch – sin bloqueos, solo marca variables
-    if (ts.touched()) {
+    bool touching = ts.touched();
+    touchWasActive = touching;
+    if (touching) {
         lastTouchTime = millis();
         if (screensaverActive) {
             screensaverActive = false;
             tft.fillScreen(MI_NEGRO);
             uiNeedsFullRedraw = true;
             weedNeedsRedraw = true;
-            while (ts.touched()) { yield(); delay(10); }
             touchStartTime = 0;
         } else {
             TS_Point p = ts.getPoint();
